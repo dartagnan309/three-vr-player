@@ -96,6 +96,8 @@ export class ControlsUI {
       this.disposers.push(() => t.removeEventListener(ev, fn as EventListener, opts));
     };
     const setSeekFill = (pct: number) => seek.style.setProperty('--seek', `${pct}%`);
+    // Only one popup (volume / projection / settings) open at a time.
+    const closeMenus = () => { volPopup.hidden = true; projMenu.hidden = true; settings.classList.remove('open'); };
 
     on(play, 'click', () => { v.paused ? void v.play() : v.pause(); });
     on(v, 'play', () => { play.textContent = '⏸'; });
@@ -114,7 +116,7 @@ export class ControlsUI {
       if (v.duration) v.currentTime = (Number(seek.value) / 1000) * v.duration;
     });
 
-    on(mute, 'click', (e: Event) => { e.stopPropagation(); volPopup.hidden = !volPopup.hidden; });
+    on(mute, 'click', (e: Event) => { e.stopPropagation(); const open = volPopup.hidden; closeMenus(); volPopup.hidden = !open; });
     on(volume, 'input', () => { v.volume = Number(volume.value); v.muted = v.volume === 0; mute.textContent = v.muted ? '🔇' : '🔊'; });
 
     const updateProjection = () => {
@@ -127,14 +129,14 @@ export class ControlsUI {
       });
       projBtn.title = label;
     };
-    on(projBtn, 'click', (e: Event) => { e.stopPropagation(); projMenu.hidden = !projMenu.hidden; });
+    on(projBtn, 'click', (e: Event) => { e.stopPropagation(); const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
     on(projMenu, 'click', (e: Event) => {
       const b = (e.target as HTMLElement).closest('button[data-mode]') as HTMLElement | null;
       if (b) { bridge.setProjection(b.dataset.mode as Projection); updateProjection(); projMenu.hidden = true; }
     });
     updateProjection();
 
-    on(settingsBtn, 'click', (e: Event) => { e.stopPropagation(); settings.classList.toggle('open'); });
+    on(settingsBtn, 'click', (e: Event) => { e.stopPropagation(); const open = !settings.classList.contains('open'); closeMenus(); settings.classList.toggle('open', open); });
     on(swapCb, 'change', () => bridge.setSwapEyes(swapCb.checked));
     on(fovRange, 'input', () => { const d = Number(fovRange.value); fovVal.textContent = String(d); bridge.setFov(d); });
     on(ssRange, 'input', () => { const x = Number(ssRange.value); ssVal.textContent = String(x); bridge.setSupersampling(x); });
@@ -154,12 +156,23 @@ export class ControlsUI {
       else void document.exitFullscreen?.();
     });
 
-    // outside-click closes the popups (composedPath crosses the shadow boundary)
+    // outside-click closes any open popup (composedPath crosses the shadow boundary)
     on(document, 'click', (e: Event) => {
       const path = (e as Event & { composedPath(): EventTarget[] }).composedPath();
-      if (!volPopup.hidden && !path.includes(volPopup) && !path.includes(mute)) volPopup.hidden = true;
-      if (!projMenu.hidden && !path.includes(projMenu) && !path.includes(projBtn)) projMenu.hidden = true;
+      const inside = (el: Node) => path.includes(el);
+      if (![volPopup, mute, projMenu, projBtn, settings, settingsBtn].some(inside)) closeMenus();
     });
+
+    // Auto-hide the control bar after 5s of inactivity; show on movement over the player.
+    let hideTimer = 0;
+    const popupOpen = () => !volPopup.hidden || !projMenu.hidden || settings.classList.contains('open');
+    const hideBar = () => { if (!popupOpen()) controls.classList.add('tvp-hidden'); };
+    const showBar = () => { controls.classList.remove('tvp-hidden'); clearTimeout(hideTimer); hideTimer = window.setTimeout(hideBar, 5000); };
+    on(bridge.fullscreenTarget, 'pointermove', showBar);
+    on(bridge.fullscreenTarget, 'pointerdown', showBar);
+    on(bridge.fullscreenTarget, 'pointerleave', () => { clearTimeout(hideTimer); hideBar(); });
+    this.disposers.push(() => clearTimeout(hideTimer));
+    showBar();
 
     // VR button only when an immersive-VR device is available
     void bridge.vrSupported().then((ok) => {
