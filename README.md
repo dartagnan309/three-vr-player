@@ -78,6 +78,7 @@ new Player(container, {
   persistSettings?: boolean;    // default false (localStorage)
   shadowDom?: boolean;          // default true (style isolation)
   vrButton?: boolean;           // default true (shown only when a headset is present)
+  nativeFallback?: boolean;     // default true — plain 2D <video> fallback on CORS-taint
 });
 ```
 
@@ -90,7 +91,7 @@ player.enterVR(); player.dispose();
 player.video;   // the underlying <video>
 player.three;   // { renderer, scene, camera }
 
-player.on('ready'|'play'|'pause'|'ended'|'error'|'timeupdate'|'projectionchange'|'enterxr'|'exitxr', cb);
+player.on('ready'|'play'|'pause'|'ended'|'error'|'timeupdate'|'projectionchange'|'enterxr'|'exitxr'|'fallback', cb);
 ```
 
 ## Headless core
@@ -106,6 +107,10 @@ import { StereoScene, VideoSource, LookControls, buildProxyUrl } from 'three-vr-
 To use a cross-origin video as a WebGL texture it must be CORS-clean. If your host
 doesn't send `Access-Control-Allow-Origin`, run the optional [proxy companion](./proxy)
 and pass `proxy: { url, apiPassword }`. CORS-clean sources need no proxy.
+
+If a source is neither CORS-clean nor proxied, the player automatically falls back to
+plain **2D `<video>` playback** (no reprojection) and emits a `fallback` event, instead of
+failing on a black screen. Disable with `nativeFallback: false`.
 
 ## Codecs
 

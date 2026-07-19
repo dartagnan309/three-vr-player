@@ -28,8 +28,16 @@ export interface PlayerOptions {
   shadowDom?: boolean;
   /** Show the Enter-VR button when a headset is available. Default `true`. */
   vrButton?: boolean;
+  /**
+   * If a cross-origin source can't be used as a WebGL texture (CORS-tainted) and
+   * isn't proxied, fall back to plain 2D `<video>` playback instead of erroring.
+   * Default `true`.
+   */
+  nativeFallback?: boolean;
 }
 
 export type PlayerEvent =
   | 'ready' | 'play' | 'pause' | 'ended' | 'error' | 'timeupdate'
-  | 'projectionchange' | 'enterxr' | 'exitxr';
+  | 'projectionchange' | 'enterxr' | 'exitxr'
+  /** Emitted when the player drops to 2D native playback due to CORS. */
+  | 'fallback';

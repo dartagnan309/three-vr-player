@@ -9,9 +9,15 @@ import type { StreamFormat } from './proxy.js';
 export class VideoSource {
   private hls: Hls | null = null;
 
-  async attach(video: HTMLVideoElement, source: { url: string; format: StreamFormat }): Promise<void> {
+  async attach(
+    video: HTMLVideoElement,
+    source: { url: string; format: StreamFormat },
+    opts: { crossOrigin?: string | null } = {},
+  ): Promise<void> {
     this.dispose();
-    video.crossOrigin = video.crossOrigin ?? 'anonymous';
+    const co = opts.crossOrigin === undefined ? 'anonymous' : opts.crossOrigin;
+    if (co === null) video.removeAttribute('crossorigin');
+    else video.crossOrigin = co;
     video.playsInline = true;
 
     const { url, format } = source;

@@ -27,6 +27,8 @@ export class Player {
   private readonly listeners = new Map<PlayerEvent, Set<(p?: unknown) => void>>();
   private view: ViewSettings;
   private readyEmitted = false;
+  private native = false;
+  private loading = false;
 
   constructor(container: HTMLElement, options: PlayerOptions = {}) {
     this.opts = options;
@@ -89,7 +91,7 @@ export class Player {
     this.video.addEventListener('pause', () => this.emit('pause'));
     this.video.addEventListener('ended', () => this.emit('ended'));
     this.video.addEventListener('timeupdate', () => this.emit('timeupdate', this.video.currentTime));
-    this.video.addEventListener('error', () => this.emit('error', this.video.error));
+    this.video.addEventListener('error', () => { if (!this.loading) this.emit('error', this.video.error); });
     this.video.addEventListener('loadedmetadata', () => { if (!this.readyEmitted) { this.readyEmitted = true; this.emit('ready'); } });
     this.scene.renderer.xr.addEventListener('sessionstart', () => this.emit('enterxr'));
     this.scene.renderer.xr.addEventListener('sessionend', () => this.emit('exitxr'));
@@ -106,10 +108,52 @@ export class Player {
     const proj = o.projection ?? (this.opts.autoDetect !== false ? detectProjection(src) : null);
     if (proj) this.setProjection(proj);
     const { url, format } = buildProxyUrl(src, this.opts.proxy);
+    const primaryCO = this.opts.crossOrigin === undefined ? 'anonymous' : this.opts.crossOrigin;
+    this.loading = true;
     try {
-      await this.source.attach(this.video, { url, format });
+      await this.source.attach(this.video, { url, format }, { crossOrigin: primaryCO });
+      this.setNativeFallback(false);
       await this.video.play().catch(() => { /* autoplay may be blocked until a user gesture */ });
-    } catch (err) { this.emit('error', err); throw err; }
+    } catch (err) {
+      // A cross-origin progressive source that isn't CORS-clean (and isn't proxied) can't be a
+      // WebGL texture. Retry without crossOrigin and show plain 2D <video> playback if allowed.
+      if (this.opts.nativeFallback !== false && format === 'progressive' && primaryCO !== null) {
+        try {
+          this.setNativeFallback(true); // stop WebGL rendering before the tainted video loads
+          await this.source.attach(this.video, { url, format }, { crossOrigin: null });
+          await this.video.play().catch(() => {});
+          this.emit('fallback');
+          return;
+        } catch (err2) {
+          this.setNativeFallback(false);
+          this.emit('error', err2);
+          throw err2;
+        }
+      }
+      this.setNativeFallback(false);
+      this.emit('error', err);
+      throw err;
+    } finally {
+      this.loading = false;
+    }
+  }
+
+  /** Swap between WebGL (3D) rendering and plain 2D `<video>` playback. */
+  private setNativeFallback(on: boolean) {
+    if (on === this.native) return;
+    this.native = on;
+    if (on) {
+      this.scene.pauseRendering();
+      this.canvas.style.display = 'none';
+      Object.assign(this.video.style, {
+        display: 'block', position: 'absolute', inset: '0',
+        width: '100%', height: '100%', objectFit: 'contain', background: '#000', zIndex: '1',
+      });
+    } else {
+      this.canvas.style.display = '';
+      this.video.style.cssText = '';
+      this.scene.resumeRendering();
+    }
   }
 
   async play() { await this.video.play(); }

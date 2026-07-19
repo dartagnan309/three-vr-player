@@ -20,6 +20,10 @@ export class StereoScene {
   private readonly texture: THREE.VideoTexture;
   private readonly meshes: THREE.Mesh[] = [];
   private readonly frameCbs: (() => void)[] = [];
+  private readonly animate = () => {
+    for (const cb of this.frameCbs) cb();
+    this.renderer.render(this.scene, this.camera);
+  };
   private readonly ro: ResizeObserver;
   private currentMode: Projection;
   private currentSwap: boolean;
@@ -55,10 +59,7 @@ export class StereoScene {
       if (MODES[this.currentMode].flat) this.applyProjection(this.currentMode, this.currentSwap);
     });
 
-    this.renderer.setAnimationLoop(() => {
-      for (const cb of this.frameCbs) cb();
-      this.renderer.render(this.scene, this.camera);
-    });
+    this.renderer.setAnimationLoop(this.animate);
     this.vrButton = VRButton.createButton(this.renderer);
 
     this.ro = new ResizeObserver(() => this.resize());
@@ -124,6 +125,8 @@ export class StereoScene {
   getProjection() { return this.currentMode; }
   isFlat() { return !!MODES[this.currentMode].flat; }
   onFrame(cb: () => void) { this.frameCbs.push(cb); }
+  pauseRendering() { this.renderer.setAnimationLoop(null); }
+  resumeRendering() { this.renderer.setAnimationLoop(this.animate); }
 
   resize = () => {
     const w = this.w(), h = this.h();
