@@ -29,7 +29,7 @@ export const PROJECTIONS: { value: Projection; label: string }[] = [
   { value: '360-mono', label: '360° Mono' },
   { value: '360-sbs', label: '360° SBS' },
   { value: '360-tb', label: '360° Top-Bottom' },
-  { value: 'flat-2d', label: 'Flat 2D (regular movie)' },
+  { value: 'flat-2d', label: 'Flat 2D' },
   { value: 'flat-sbs-full', label: 'Flat 3D — Full SBS' },
   { value: 'flat-sbs-half', label: 'Flat 3D — Half SBS' },
 ];
