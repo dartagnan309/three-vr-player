@@ -51,6 +51,9 @@
 .tvp-settings label { display:flex; flex-direction:column; gap:4px; font-size:12px; color:#aab2c0; }
 .tvp-settings label.row { flex-direction:row; align-items:center; gap:8px; color:#e8eaed; font-size:13px; }
 .tvp-settings input[type=range] { width:100%; accent-color:#4f8cff; }
+.tvp-settings input[type=text], .tvp-settings input[type=password] { width:100%; padding:7px 9px;
+  border-radius:7px; border:1px solid #333; background:#151821; color:#e8eaed; font:inherit; }
+.tvp-sep { width:100%; border:0; border-top:1px solid #2a2f3a; margin:2px 0; }
 
 .tvp-toast { position:absolute; left:50%; bottom:74px; transform:translateX(-50%); max-width:80%;
   padding:10px 16px; border-radius:10px; background:rgba(27,31,42,.93); border:1px solid #2a2f3a; color:#e8eaed;

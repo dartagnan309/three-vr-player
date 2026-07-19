@@ -1,7 +1,7 @@
 import { StereoScene } from './core/StereoScene.js';
 import { LookControls } from './core/LookControls.js';
 import { VideoSource } from './core/VideoSource.js';
-import { buildProxyUrl } from './core/proxy.js';
+import { buildProxyUrl, type ProxyConfig } from './core/proxy.js';
 import { detectProjection } from './core/projections.js';
 import { ControlsUI } from './ui/ControlsUI.js';
 import css from './ui/controls.css?inline';
@@ -29,9 +29,14 @@ export class Player {
   private readyEmitted = false;
   private native = false;
   private loading = false;
+  private proxyConfig?: ProxyConfig;
+  private useProxy = false;
+  private currentSrc?: string;
 
   constructor(container: HTMLElement, options: PlayerOptions = {}) {
     this.opts = options;
+    this.proxyConfig = options.proxy;
+    this.useProxy = !!options.proxy;
     const stored = options.persistSettings ? this.loadSettings() : null;
     this.view = {
       projection: options.projection ?? stored?.projection ?? '180-sbs',
@@ -84,6 +89,8 @@ export class Player {
         setFov: (d) => this.setFov(d),
         setSupersampling: (x) => this.setSupersampling(x),
         initial: { swapEyes: this.view.swapEyes, fov: this.view.fov, supersampling: this.view.supersampling },
+        proxy: { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy },
+        setProxy: (p) => this.setProxy(p),
       });
     }
 
@@ -105,9 +112,10 @@ export class Player {
   }
 
   async load(src: string, o: { projection?: Projection } = {}): Promise<void> {
+    this.currentSrc = src;
     const proj = o.projection ?? (this.opts.autoDetect !== false ? detectProjection(src) : null);
     if (proj) this.setProjection(proj);
-    const { url, format } = buildProxyUrl(src, this.opts.proxy);
+    const { url, format } = buildProxyUrl(src, this.useProxy ? this.proxyConfig : undefined);
     const primaryCO = this.opts.crossOrigin === undefined ? 'anonymous' : this.opts.crossOrigin;
     this.loading = true;
     try {
@@ -168,6 +176,12 @@ export class Player {
   setSwapEyes(v: boolean) { this.scene.setSwapEyes(v); this.view.swapEyes = v; this.persist(); }
   setFov(deg: number) { this.scene.setFov(deg); this.view.fov = deg; this.persist(); }
   setSupersampling(x: number) { this.scene.setSupersampling(x); this.view.supersampling = x; this.persist(); }
+  /** Update the CORS proxy config / toggle it, and reload the current source if any. */
+  setProxy(p: { url: string; apiPassword?: string; enabled: boolean }) {
+    this.proxyConfig = p.url ? { url: p.url, apiPassword: p.apiPassword || undefined } : undefined;
+    this.useProxy = p.enabled;
+    if (this.currentSrc) void this.load(this.currentSrc);
+  }
 
   async enterVR() {
     const btn = this.scene.vrButton as HTMLButtonElement;

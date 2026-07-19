@@ -87,6 +87,7 @@ new Player(container, {
 ```ts
 player.load(src, { projection? }); player.play(); player.pause();
 player.setProjection(p); player.setSwapEyes(b); player.setFov(deg); player.setSupersampling(x);
+player.setProxy({ url, apiPassword?, enabled });  // also exposed as a toggle in the ⚙ settings
 player.enterVR(); player.dispose();
 player.video;   // the underlying <video>
 player.three;   // { renderer, scene, camera }

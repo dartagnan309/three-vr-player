@@ -15,6 +15,8 @@ export interface PlayerBridge {
   setFov(deg: number): void;
   setSupersampling(x: number): void;
   initial: { swapEyes: boolean; fov: number; supersampling: number };
+  proxy: { url: string; apiPassword: string; enabled: boolean };
+  setProxy(p: { url: string; apiPassword: string; enabled: boolean }): void;
 }
 
 type Props = Record<string, unknown> & { class?: string };
@@ -70,10 +72,17 @@ export class ControlsUI {
     const fovVal = h('span', { textContent: String(bridge.initial.fov) });
     const ssRange = h('input', { type: 'range', min: '1', max: '2', step: '0.25', value: String(bridge.initial.supersampling) });
     const ssVal = h('span', { textContent: String(bridge.initial.supersampling) });
+    const useProxyCb = h('input', { type: 'checkbox', checked: bridge.proxy.enabled });
+    const proxyUrlIn = h('input', { type: 'text', value: bridge.proxy.url, placeholder: 'http://localhost:8888', spellcheck: false });
+    const proxyPwIn = h('input', { type: 'password', value: bridge.proxy.apiPassword, placeholder: 'API password' });
     const settings = h('section', { class: 'tvp-settings' }, [
       h('label', { class: 'row' }, [swapCb, 'Swap eyes (if depth looks wrong)']),
       h('label', {}, [makeText('Field of view (zoom): ', fovVal, '°'), fovRange]),
       h('label', {}, [makeText('Supersampling: ', ssVal, '× (sharpness)'), ssRange]),
+      h('hr', { class: 'tvp-sep' }),
+      h('label', { class: 'row' }, [useProxyCb, 'Use CORS proxy']),
+      h('label', {}, ['Proxy URL', proxyUrlIn]),
+      h('label', {}, ['API password', proxyPwIn]),
     ]);
 
     const toast = h('div', { class: 'tvp-toast' });
@@ -129,6 +138,10 @@ export class ControlsUI {
     on(swapCb, 'change', () => bridge.setSwapEyes(swapCb.checked));
     on(fovRange, 'input', () => { const d = Number(fovRange.value); fovVal.textContent = String(d); bridge.setFov(d); });
     on(ssRange, 'input', () => { const x = Number(ssRange.value); ssVal.textContent = String(x); bridge.setSupersampling(x); });
+    const applyProxy = () => bridge.setProxy({ url: proxyUrlIn.value.trim(), apiPassword: proxyPwIn.value, enabled: useProxyCb.checked });
+    on(useProxyCb, 'change', applyProxy);
+    on(proxyUrlIn, 'change', applyProxy);
+    on(proxyPwIn, 'change', applyProxy);
     on(bridge.surface, 'wheel', (e: WheelEvent) => {
       e.preventDefault();
       const next = Math.max(30, Math.min(100, Number(fovRange.value) + Math.sign(e.deltaY) * 3));
