@@ -1,0 +1,21 @@
+# Secrets / local env
+.env
+
+# OS / editor cruft
+.DS_Store
+Thumbs.db
+*.log
+
+# Build output
+node_modules/
+dist/
+dist-demo/
+.vite/
+*.tgz
+
+# Playwright MCP E2E artifacts (screenshots, console/snapshot dumps)
+.playwright-mcp/
+/*.png
+
+# Local design / planning docs (not part of the published repo)
+docs/

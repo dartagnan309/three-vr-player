@@ -1,0 +1,8 @@
+services:
+  proxy:
+    image: mhdzumair/mediaflow-proxy
+    ports:
+      - "8888:8888"
+    environment:
+      - API_PASSWORD=${API_PASSWORD:-changeme}
+    restart: unless-stopped

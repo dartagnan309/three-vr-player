@@ -1,0 +1,24 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>three-vr-player — demo</title>
+  <style>
+    html, body { margin: 0; height: 100%; background: #0b0d10; color: #e8eaed; font: 14px system-ui, sans-serif; }
+    #player { position: fixed; inset: 0; }
+    #bar { position: fixed; top: 0; left: 0; right: 0; display: flex; gap: 8px; padding: 10px; z-index: 10;
+           background: linear-gradient(#000a, transparent); }
+    #url { flex: 1; padding: 9px 12px; border-radius: 8px; border: 1px solid #333; background: #151821; color: #e8eaed; }
+    #load { padding: 9px 14px; border-radius: 8px; border: 0; background: #4f8cff; color: #fff; font-weight: 600; cursor: pointer; }
+  </style>
+</head>
+<body>
+  <div id="player"></div>
+  <header id="bar">
+    <input id="url" type="text" spellcheck="false" placeholder="Remote 3D/VR video URL…" />
+    <button id="load">Load</button>
+  </header>
+  <script type="module" src="./main.ts"></script>
+</body>
+</html>
