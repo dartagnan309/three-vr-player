@@ -75,6 +75,7 @@ export class Player {
       projection: this.view.projection, swapEyes: this.view.swapEyes,
       fov: this.view.fov, supersampling: this.view.supersampling,
     });
+    if (options.title) this.scene.setVRTitle(options.title);
     this.look = new LookControls(this.scene.camera, this.canvas, { isPresenting: () => this.scene.renderer.xr.isPresenting });
     this.scene.onFrame(() => this.look.update());
     this.look.setEnabled(!this.scene.isFlat());

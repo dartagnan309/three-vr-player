@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import type { Projection } from '../types.js';
 import { MODES } from './projections.js';
+import { VRControls } from './VRControls.js';
 
 /**
  * Maps a video onto the geometry for a chosen projection (inside-out 180/360
@@ -20,8 +21,10 @@ export class StereoScene {
   private readonly texture: THREE.VideoTexture;
   private readonly meshes: THREE.Mesh[] = [];
   private readonly frameCbs: (() => void)[] = [];
-  private readonly animate = () => {
+  private vrControls?: VRControls;
+  private readonly animate = (time?: number) => {
     for (const cb of this.frameCbs) cb();
+    this.vrControls?.update(time ?? 0);
     // Upload the current video frame synchronously, before the render, every frame. This
     // is load-bearing on the Quest: without it, VideoTexture's own async (video-frame-
     // callback) upload can land mid-render during an XR eye pass and corrupt the triangles
@@ -74,9 +77,39 @@ export class StereoScene {
 
     this.renderer.setAnimationLoop(this.animate);
 
+    // In-VR controls live only for the duration of an immersive session: the DOM
+    // control bar isn't visible inside the headset, so we draw a panel in the scene.
+    this.renderer.xr.addEventListener('sessionstart', () => this.buildVRControls());
+    this.renderer.xr.addEventListener('sessionend', () => { this.vrControls?.dispose(); this.vrControls = undefined; });
+
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas);
   }
+
+  private buildVRControls() {
+    const v = this.video;
+    this.vrControls = new VRControls({
+      renderer: this.renderer,
+      scene: this.scene,
+      actions: {
+        isPlaying: () => !v.paused,
+        currentTime: () => v.currentTime,
+        duration: () => v.duration || 0,
+        volume: () => v.volume,
+        muted: () => v.muted,
+        title: () => this.vrTitle,
+        togglePlay: () => { if (v.paused) void v.play(); else v.pause(); },
+        seekFraction: (f) => { if (v.duration) v.currentTime = f * v.duration; },
+        setVolume: (x) => { v.volume = x; if (x > 0) v.muted = false; },
+        toggleMute: () => { v.muted = !v.muted; },
+        exitVR: () => this.exitVR(),
+      },
+    });
+  }
+
+  /** Optional title shown on the in-VR control panel. */
+  setVRTitle(t: string) { this.vrTitle = t; }
+  private vrTitle = '';
 
   private w() { return this.canvas.clientWidth || 1; }
   private h() { return this.canvas.clientHeight || 1; }
@@ -182,6 +215,7 @@ export class StereoScene {
   dispose() {
     this.ro.disconnect();
     this.renderer.setAnimationLoop(null);
+    this.vrControls?.dispose();
     this.texture.dispose();
     this.clearMeshes();
     this.renderer.dispose();

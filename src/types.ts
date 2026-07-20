@@ -28,6 +28,8 @@ export interface PlayerOptions {
   shadowDom?: boolean;
   /** Show the Enter-VR button when a headset is available. Default `true`. */
   vrButton?: boolean;
+  /** Title shown on the in-VR control panel. Optional. */
+  title?: string;
   /**
    * If a cross-origin source can't be used as a WebGL texture (CORS-tainted) and
    * isn't proxied, fall back to plain 2D `<video>` playback instead of erroring.
