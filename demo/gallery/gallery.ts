@@ -71,7 +71,7 @@ for (const item of ITEMS) {
   onTap(playBtn, () => {
     stopActive();
     card.classList.add('loading');
-    const player = new Player(stage, { src: item.src, projection: item.projection ?? '180-sbs', controls: true });
+    const player = new Player(stage, { src: item.src, projection: item.projection ?? '180-sbs', controls: true, title: item.title });
     active = { player, card };
 
     const reveal = () => { card.classList.remove('loading'); card.classList.add('playing'); };

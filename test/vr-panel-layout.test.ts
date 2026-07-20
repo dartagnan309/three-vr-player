@@ -15,6 +15,11 @@ describe('vr panel hitTest', () => {
     expect(hitTest(p.x, p.y)).toEqual({ region: 'exit' });
   });
 
+  it('hits the recenter button top-left', () => {
+    const p = mid(L.recenter);
+    expect(hitTest(p.x, p.y)).toEqual({ region: 'recenter' });
+  });
+
   it('reads a seek fraction from the bar position', () => {
     const y = L.seekBar.y + L.seekBar.h / 2;
     expect(hitTest(L.seekBar.x, y)?.value).toBeCloseTo(0, 2);

@@ -80,7 +80,10 @@ export class StereoScene {
     // In-VR controls live only for the duration of an immersive session: the DOM
     // control bar isn't visible inside the headset, so we draw a panel in the scene.
     this.renderer.xr.addEventListener('sessionstart', () => this.buildVRControls());
-    this.renderer.xr.addEventListener('sessionend', () => { this.vrControls?.dispose(); this.vrControls = undefined; });
+    this.renderer.xr.addEventListener('sessionend', () => {
+      this.vrControls?.dispose(); this.vrControls = undefined;
+      this.video.pause(); // stop playback when leaving VR
+    });
 
     this.ro = new ResizeObserver(() => this.resize());
     this.ro.observe(canvas);
@@ -103,8 +106,25 @@ export class StereoScene {
         setVolume: (x) => { v.volume = x; if (x > 0) v.muted = false; },
         toggleMute: () => { v.muted = !v.muted; },
         exitVR: () => this.exitVR(),
+        recenter: () => this.recenter(),
       },
     });
+  }
+
+  /** Recenter the view: make the viewer's current spot and facing the origin, so the
+   *  video front is straight ahead again. Resets yaw and horizontal position; keeps
+   *  head height and a level horizon (no pitch/roll). */
+  recenter(): void {
+    const xr = this.renderer.xr;
+    if (!xr.isPresenting) return;
+    const baseRef = xr.getReferenceSpace();
+    if (!baseRef) return;
+    const cam = xr.getCamera();
+    const pos = cam.getWorldPosition(new THREE.Vector3());
+    const yaw = new THREE.Euler().setFromQuaternion(cam.getWorldQuaternion(new THREE.Quaternion()), 'YXZ').y;
+    const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'));
+    const offset = new XRRigidTransform({ x: pos.x, y: 0, z: pos.z }, { x: q.x, y: q.y, z: q.z, w: q.w });
+    xr.setReferenceSpace(baseRef.getOffsetReferenceSpace(offset));
   }
 
   /** Optional title shown on the in-VR control panel. */

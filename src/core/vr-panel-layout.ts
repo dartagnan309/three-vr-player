@@ -9,13 +9,14 @@
 export const PANEL_W = 1024;
 export const PANEL_H = 340;
 
-export type VRRegion = 'play' | 'seek' | 'volume' | 'exit';
+export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter';
 
 export interface Rect { x: number; y: number; w: number; h: number; }
 
 export interface PanelLayout {
   width: number; height: number;
   title: Rect;
+  recenter: Rect;
   exit: Rect;
   play: Rect;
   volIcon: Rect;
@@ -30,6 +31,7 @@ export function panelLayout(): PanelLayout {
   const W = PANEL_W, H = PANEL_H, pad = 48;
   return {
     width: W, height: H,
+    recenter: { x: 30, y: 26, w: 160, h: 52 },
     exit:    { x: W - 190, y: 26, w: 160, h: 52 },
     title:   { x: 0, y: 92, w: W, h: 44 },
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },
@@ -61,6 +63,7 @@ export interface VRHit {
  */
 export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout()): VRHit | null {
   const BAR_PAD = 26;
+  if (inRect(layout.recenter, x, y)) return { region: 'recenter' };
   if (inRect(layout.exit, x, y)) return { region: 'exit' };
   if (inRect(layout.play, x, y)) return { region: 'play' };
   if (inRect(layout.volIcon, x, y)) return { region: 'volume' }; // no value -> toggle mute
