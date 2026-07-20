@@ -1,0 +1,10 @@
+node_modules
+dist
+dist-demo
+.git
+.github
+docs
+media
+*.png
+.playwright-mcp
+*.tgz
