@@ -9,8 +9,8 @@ export interface PlayerBridge {
   fullscreenTarget: HTMLElement;
   vrButton: HTMLElement;
   vrSupported(): Promise<boolean>;
-  getProjection(): Projection;
-  setProjection(p: Projection): void;
+  getProjection(): Projection | 'off';
+  setProjection(p: Projection | 'off'): void;
   setSwapEyes(v: boolean): void;
   setFov(deg: number): void;
   setSupersampling(x: number): void;
@@ -59,6 +59,9 @@ export class ControlsUI {
       b.dataset.mode = p.value;
       projMenu.append(b);
     }
+    const offBtn = h('button', { textContent: 'Off (native player)' });
+    offBtn.dataset.mode = 'off';
+    projMenu.append(h('hr', { class: 'tvp-sep' }), offBtn);
     const projWrap = h('span', { class: 'tvp-projwrap' }, [projBtn, projMenu]);
 
     // --- settings ---
@@ -132,7 +135,7 @@ export class ControlsUI {
     on(projBtn, 'click', (e: Event) => { e.stopPropagation(); const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
     on(projMenu, 'click', (e: Event) => {
       const b = (e.target as HTMLElement).closest('button[data-mode]') as HTMLElement | null;
-      if (b) { bridge.setProjection(b.dataset.mode as Projection); updateProjection(); projMenu.hidden = true; }
+      if (b) { bridge.setProjection(b.dataset.mode as Projection | 'off'); updateProjection(); projMenu.hidden = true; }
     });
     updateProjection();
 

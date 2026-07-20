@@ -28,6 +28,8 @@ export class Player {
   private view: ViewSettings;
   private readyEmitted = false;
   private native = false;
+  private tainted = false;              // current video loaded via CORS-fallback (crossOrigin removed)
+  private displayMode: Projection | 'off';
   private loading = false;
   private proxyConfig?: ProxyConfig;
   private useProxy = false;
@@ -44,6 +46,7 @@ export class Player {
       fov: options.fov ?? stored?.fov ?? 70,
       supersampling: options.supersampling ?? stored?.supersampling ?? 1.5,
     };
+    this.displayMode = this.view.projection;
 
     this.wrap = document.createElement('div');
     this.wrap.className = 'tvp';
@@ -83,7 +86,7 @@ export class Player {
         fullscreenTarget: this.wrap,
         vrButton: this.scene.vrButton,
         vrSupported: () => this.vrSupported(),
-        getProjection: () => this.scene.getProjection(),
+        getProjection: () => this.displayMode,
         setProjection: (p) => this.setProjection(p),
         setSwapEyes: (v) => this.setSwapEyes(v),
         setFov: (d) => this.setFov(d),
@@ -114,25 +117,29 @@ export class Player {
   async load(src: string, o: { projection?: Projection } = {}): Promise<void> {
     this.currentSrc = src;
     const proj = o.projection ?? (this.opts.autoDetect !== false ? detectProjection(src) : null);
-    if (proj) this.setProjection(proj);
+    if (proj) this.applyProjectionGeometry(proj);
+    if (this.displayMode !== 'off') this.displayMode = this.view.projection;
     const { url, format } = buildProxyUrl(src, this.useProxy ? this.proxyConfig : undefined);
     const primaryCO = this.opts.crossOrigin === undefined ? 'anonymous' : this.opts.crossOrigin;
     this.loading = true;
     try {
       await this.source.attach(this.video, { url, format }, { crossOrigin: primaryCO });
-      this.setNativeFallback(false);
+      this.tainted = false;
+      this.applyDisplay();
       await this.video.play().catch(() => { /* autoplay may be blocked until a user gesture */ });
     } catch (err) {
       // A cross-origin progressive source that isn't CORS-clean (and isn't proxied) can't be a
       // WebGL texture. Retry without crossOrigin and show plain 2D <video> playback if allowed.
       if (this.opts.nativeFallback !== false && format === 'progressive' && primaryCO !== null) {
         try {
+          this.tainted = true;
           this.setNativeFallback(true); // stop WebGL rendering before the tainted video loads
           await this.source.attach(this.video, { url, format }, { crossOrigin: null });
           await this.video.play().catch(() => {});
           this.emit('fallback');
           return;
         } catch (err2) {
+          this.tainted = false;
           this.setNativeFallback(false);
           this.emit('error', err2);
           throw err2;
@@ -166,13 +173,28 @@ export class Player {
 
   async play() { await this.video.play(); }
   pause() { this.video.pause(); }
-  setProjection(p: Projection) {
+  /** Set the display mode: a geometry projection (WebGL 3D) or 'off' for plain 2D `<video>`. */
+  setProjection(p: Projection | 'off') {
+    if (p === 'off') {
+      this.displayMode = 'off';
+      this.setNativeFallback(true);
+      this.emit('projectionchange', p);
+      return;
+    }
+    this.displayMode = p;
+    this.applyProjectionGeometry(p);
+    // A CORS-tainted (native-fallback) video can't be a WebGL texture — reload to re-attempt 3D.
+    if (this.tainted && this.currentSrc) void this.load(this.currentSrc);
+    else this.setNativeFallback(false);
+    this.emit('projectionchange', p);
+  }
+  private applyProjectionGeometry(p: Projection) {
     this.scene.setProjection(p);
     this.look.setEnabled(!this.scene.isFlat());
     this.look.reset();
     this.view.projection = p; this.persist();
-    this.emit('projectionchange', p);
   }
+  private applyDisplay() { this.setNativeFallback(this.displayMode === 'off'); }
   setSwapEyes(v: boolean) { this.scene.setSwapEyes(v); this.view.swapEyes = v; this.persist(); }
   setFov(deg: number) { this.scene.setFov(deg); this.view.fov = deg; this.persist(); }
   setSupersampling(x: number) { this.scene.setSupersampling(x); this.view.supersampling = x; this.persist(); }

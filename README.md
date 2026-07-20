@@ -62,6 +62,9 @@ menu in the controls, or set it programmatically:
 | `flat-sbs-full` | flat screen | left/right (full-width per eye) |
 | `flat-sbs-half` | flat screen | left/right (half-width per eye) |
 
+Pick **Off (native player)** in the menu — or call `setProjection('off')` — to disable
+reprojection and play the raw **2D `<video>`** (the same view as the CORS fallback).
+
 ## Options
 
 ```ts
