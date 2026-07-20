@@ -9,14 +9,9 @@ interface Item {
   projection?: Projection;
 }
 
-// Michael Verdi's VR180 3D sample clips (exp.michaelverdi.com). These are CORS-clean,
-// so they play in 3D directly — no proxy needed. They're large (0.4–1.4 GB), which is
-// why nothing loads until the poster's play button is clicked, one video at a time.
+// sample clips
 const ITEMS: Item[] = [
-  { title: 'Virtual Set',   sub: 'VR 180° · 3D', poster: 'https://exp.michaelverdi.com/3dv/virtual-set.jpg',       src: 'https://exp.michaelverdi.com/3dv/virtual-set-38mbps.mp4' },
-  { title: 'Blandscape',    sub: 'VR 180° · 3D', poster: 'https://exp.michaelverdi.com/blandscape/blandscape.jpg', src: 'https://exp.michaelverdi.com/blandscape/blandscape-38mbps.mp4' },
-  { title: '8× Slow',       sub: 'VR 180° · 3D', poster: 'https://exp.michaelverdi.com/immersive/8xslow.jpg',      src: 'https://exp.michaelverdi.com/immersive/8xslow.mp4' },
-  { title: 'Visiting Dylan', sub: 'VR 180° · 3D', poster: 'https://exp.michaelverdi.com/3dv/visiting-dylan.jpg',   src: 'https://exp.michaelverdi.com/3dv/visiting-dylan-38mbps.mp4' },
+  { title: 'Virtual Set', sub: 'VR 180° · 3D', poster: 'https://verdi.github.io/VR180-Web-Player/poster.jpg', src: 'https://verdi.github.io/VR180-Web-Player/sbs-video.mp4' }
 ];
 
 const PLAY_SVG =
