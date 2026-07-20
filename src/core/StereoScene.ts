@@ -20,6 +20,12 @@ export class StereoScene {
   private readonly video: HTMLVideoElement;
   private readonly texture: THREE.VideoTexture;
   private readonly meshes: THREE.Mesh[] = [];
+  // Holds the video mesh(es); tilt (pitch) and zoom (scale) are applied here so the
+  // in-VR panel/controllers (added straight to the scene) aren't affected.
+  private readonly rig = new THREE.Group();
+  private tilt = 0;        // radians (rig pitch)
+  private fov = 1;         // content field-of-view factor: 1 = full immersive, <1 = smaller/farther window
+  private builtFov = 1;    // fov the current geometry was built at (rebuild throttle)
   private readonly frameCbs: (() => void)[] = [];
   private vrControls?: VRControls;
   private readonly animate = (time?: number) => {
@@ -70,6 +76,8 @@ export class StereoScene {
     // still exposed on the instance for consumers who want to opt back in.
     this.texture.anisotropy = 1;
 
+    this.rig.rotation.order = 'YXZ'; // yaw then pitch, so grab-rotate composes naturally
+    this.scene.add(this.rig);
     this.applyProjection(this.currentMode, this.currentSwap);
     video.addEventListener('loadedmetadata', () => {
       if (MODES[this.currentMode].flat) this.applyProjection(this.currentMode, this.currentSwap);
@@ -107,6 +115,9 @@ export class StereoScene {
         toggleMute: () => { v.muted = !v.muted; },
         exitVR: () => this.exitVR(),
         recenter: () => this.recenter(),
+        adjustTilt: (d) => this.adjustTilt(d),
+        adjustYaw: (d) => this.adjustYaw(d),
+        adjustZoom: (d) => this.adjustZoom(d),
       },
     });
   }
@@ -142,11 +153,21 @@ export class StereoScene {
   }
 
   private buildGeometry(mode: Projection): THREE.BufferGeometry {
-    // Match the reference VR180 geometry: 64×32 sphere, front gore at phiStart -π/2.
-    const kind = MODES[mode].geom;
-    if (kind === 'sphere180') { const g = new THREE.SphereGeometry(500, 64, 32, -Math.PI / 2, Math.PI, 0, Math.PI); g.scale(-1, 1, 1); return g; }
-    if (kind === 'sphere360') { const g = new THREE.SphereGeometry(500, 64, 32); g.scale(-1, 1, 1); return g; }
-    const h = 2.4, w = h * this.planeAspect(mode);
+    // 64×32 sphere, front gore centred (reference VR180 geometry). The zoom `fov` factor
+    // shrinks the angular cap the video occupies (and the flat plane's size) so the
+    // scene recedes into a smaller window and feels farther; fov = 1 is the full frame.
+    const kind = MODES[mode].geom, f = this.fov;
+    if (kind === 'sphere180') {
+      const phiLen = Math.PI * f, thetaLen = Math.PI * f;
+      const g = new THREE.SphereGeometry(50, 64, 32, -phiLen / 2, phiLen, Math.PI / 2 - thetaLen / 2, thetaLen);
+      g.scale(-1, 1, 1); return g;
+    }
+    if (kind === 'sphere360') {
+      const phiLen = 2 * Math.PI * f, thetaLen = Math.PI * f;
+      const g = new THREE.SphereGeometry(50, 64, 32, Math.PI - phiLen / 2, phiLen, Math.PI / 2 - thetaLen / 2, thetaLen);
+      g.scale(-1, 1, 1); return g;
+    }
+    const h = 2.4 * f, w = h * this.planeAspect(mode);
     const g = new THREE.PlaneGeometry(w, h); g.translate(0, 0, -2); return g;
   }
 
@@ -177,7 +198,7 @@ export class StereoScene {
   }
 
   private clearMeshes() {
-    for (const m of this.meshes) { this.scene.remove(m); m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
+    for (const m of this.meshes) { this.rig.remove(m); m.geometry.dispose(); (m.material as THREE.Material).dispose(); }
     this.meshes.length = 0;
   }
 
@@ -191,7 +212,30 @@ export class StereoScene {
     mesh.layers.set(0); // desktop + both XR eyes see the single mesh
     if (MODES[mode].geom === 'sphere180') mesh.rotation.y = Math.PI / 2; // orient the 180 gore forward
     mesh.onBeforeRender = (_r, _s, cam) => this.updateStereoUV(cam);
-    this.scene.add(mesh); this.meshes.push(mesh);
+    this.rig.add(mesh); this.meshes.push(mesh);
+  }
+
+  /** Pitch the video content up/down (radians, accumulated and clamped). */
+  adjustTilt(delta: number) {
+    this.tilt = Math.max(-0.9, Math.min(0.9, this.tilt + delta));
+    this.rig.rotation.x = this.tilt;
+  }
+  /** Yaw the video content left/right (radians, accumulated, unclamped). */
+  adjustYaw(delta: number) {
+    this.rig.rotation.y += delta;
+  }
+  /** Zoom by changing the content field of view (positive delta = zoom in / more
+   *  immersive). Shrinking the fov maps the video into a smaller angular window so the
+   *  scene recedes and feels farther; growing it fills the view. Rebuilds the projection
+   *  geometry, throttled so it doesn't churn every frame. */
+  adjustZoom(delta: number) {
+    this.fov = Math.max(0.3, Math.min(1, this.fov + delta));
+    if (Math.abs(this.fov - this.builtFov) >= 0.03) this.rebuildGeometry();
+  }
+
+  private rebuildGeometry() {
+    for (const m of this.meshes) { const old = m.geometry; m.geometry = this.buildGeometry(this.currentMode); old.dispose(); }
+    this.builtFov = this.fov;
   }
 
   setProjection(p: Projection) { this.applyProjection(p, this.currentSwap); }
@@ -212,7 +256,10 @@ export class StereoScene {
     const session = await navigator.xr.requestSession('immersive-vr', this.vrSessionInit);
     await this.renderer.xr.setSession(session);
   }
-  exitVR(): void { void this.renderer.xr.getSession()?.end(); }
+  exitVR(): void {
+    if (!this.video.paused) this.video.pause(); // pause first if playing, then leave VR
+    void this.renderer.xr.getSession()?.end();
+  }
   /** Arm the browser/headset's own "Enter VR" affordance (e.g. the Quest system button). */
   offerVR(): void {
     const offer = (navigator.xr as { offerSession?: (m: XRSessionMode, i: XRSessionInit) => Promise<XRSession> } | undefined)?.offerSession;

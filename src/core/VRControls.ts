@@ -17,6 +17,9 @@ export interface VRControlsActions {
   toggleMute(): void;
   exitVR(): void;
   recenter(): void;
+  adjustTilt(delta: number): void;
+  adjustYaw(delta: number): void;
+  adjustZoom(delta: number): void;
 }
 
 const ACCENT = '#4f8cff';
@@ -29,6 +32,10 @@ const IDLE_HIDE_MS = 8000;
 const MOTION_ROT = 0.05;            // radians
 const MOTION_POS = 0.02;            // metres
 const REVEAL_COOLDOWN_MS = 1500;    // don't re-summon on motion right after hiding
+// Right thumbstick X zooms (content fov); pitch/yaw are the grip grab-rotate. Tunable.
+const STICK_DEADZONE = 0.15;
+const ZOOM_RATE = 0.012;            // content fov (stick X)
+const GRAB_TAP_ANGLE = 0.08;        // radians: a grip turned less than this is a tap (toggle), not a grab
 
 /** A world-locked control panel for immersive VR, drawn to a canvas texture and
  *  driven by the motion controllers' laser + trigger. Lives only while an XR
@@ -52,6 +59,13 @@ export class VRControls {
   private readonly prevQuat: THREE.Quaternion[] = [];   // last frame's controller poses, for motion reveal
   private readonly prevPos: THREE.Vector3[] = [];
   private revealCooldownUntil = 0;
+  // Grip grab-rotate: while held, the controller's rotation drives content pitch/yaw.
+  private grabbing: number | null = null;
+  private readonly grabStartQuat = new THREE.Quaternion();
+  private readonly prevGrabQuat = new THREE.Quaternion();
+  private readonly grabQuat = new THREE.Quaternion();
+  private readonly deltaQuat = new THREE.Quaternion();
+  private readonly grabEuler = new THREE.Euler(0, 0, 0, 'YXZ');
   private readonly controllers: THREE.Group[] = [];
   private readonly lasers: THREE.Line[] = [];
   private readonly connected: boolean[] = [];   // per slot: is a real tracked-pointer bound?
@@ -113,7 +127,8 @@ export class VRControls {
       this.connected.push(i < trackedCount);
 
       const select = () => this.onSelect(i);
-      const squeeze = () => this.toggle();   // grip summons/dismisses (+ recenters) the panel
+      const grabStart = () => this.onGrabStart(i); // grip down: begin grab-rotate
+      const grabEnd = () => this.onGrabEnd(i);     // grip up: end grab, or toggle panel if it was a tap
       const connect = (e?: { data?: { targetRayMode?: string } }) => { this.connected[i] = !e?.data || e.data.targetRayMode === 'tracked-pointer'; };
       const disconnect = () => { this.connected[i] = false; };
       const ev = c as unknown as {
@@ -121,12 +136,14 @@ export class VRControls {
         removeEventListener(t: string, l: (e?: { data?: { targetRayMode?: string } }) => void): void;
       };
       ev.addEventListener('selectstart', select);
-      ev.addEventListener('squeezestart', squeeze);
+      ev.addEventListener('squeezestart', grabStart);
+      ev.addEventListener('squeezeend', grabEnd);
       ev.addEventListener('connected', connect);
       ev.addEventListener('disconnected', disconnect);
       this.cleanups.push(() => {
         ev.removeEventListener('selectstart', select);
-        ev.removeEventListener('squeezestart', squeeze);
+        ev.removeEventListener('squeezestart', grabStart);
+        ev.removeEventListener('squeezeend', grabEnd);
         ev.removeEventListener('connected', connect);
         ev.removeEventListener('disconnected', disconnect);
       });
@@ -146,6 +163,8 @@ export class VRControls {
   update(time: number): void {
     if (!this.renderer.xr.getSession()) return;
     this.pollToggle();
+    this.handleThumbstick();
+    this.handleGrab();
     this.maybeRevealOnMotion(time);
 
     if (!this.visible) { for (const l of this.lasers) l.visible = false; this.cursor.visible = false; return; }
@@ -224,6 +243,7 @@ export class VRControls {
   /** Re-summon the panel when a connected controller is deliberately moved (and
    *  we're past the post-hide cooldown). Tracks each controller's pose per frame. */
   private maybeRevealOnMotion(time: number): void {
+    if (this.grabbing !== null) return; // don't pop the panel while grab-rotating
     for (let i = 0; i < this.controllers.length; i++) {
       const c = this.controllers[i];
       const p = this.tmpVec.setFromMatrixPosition(c.matrixWorld);
@@ -239,6 +259,50 @@ export class VRControls {
       this.prevQuat[i].copy(q);
       this.prevPos[i].copy(p);
     }
+  }
+
+  /** Right thumbstick X zooms the content fov every frame it's held (push right =
+   *  zoom in). Pitch/yaw are handled by the grip grab-rotate, not the stick. */
+  private handleThumbstick(): void {
+    const session = this.renderer.xr.getSession();
+    if (!session) return;
+    for (const src of session.inputSources) {
+      if (src.handedness !== 'right' || !src.gamepad) continue;
+      const ax = src.gamepad.axes;
+      // xr-standard: thumbstick X at axes[2]; fall back to [0] on runtimes with only 2 axes.
+      const x = ax.length >= 4 ? (ax[2] ?? 0) : (ax[0] ?? 0);
+      const a = Math.abs(x);
+      if (a > STICK_DEADZONE) this.actions.adjustZoom(Math.sign(x) * (a - STICK_DEADZONE) / (1 - STICK_DEADZONE) * ZOOM_RATE);
+      break;
+    }
+  }
+
+  private onGrabStart(i: number): void {
+    if (!this.connected[i]) return;
+    this.grabbing = i;
+    this.controllers[i].getWorldQuaternion(this.grabStartQuat);
+    this.prevGrabQuat.copy(this.grabStartQuat);
+  }
+
+  private onGrabEnd(i: number): void {
+    if (this.grabbing !== i) return;
+    this.grabbing = null;
+    this.revealCooldownUntil = performanceNow() + REVEAL_COOLDOWN_MS;
+    // A grip barely turned is a tap -> toggle the panel; a real turn was a grab.
+    if (this.controllers[i].getWorldQuaternion(this.grabQuat).angleTo(this.grabStartQuat) < GRAB_TAP_ANGLE) this.toggle();
+  }
+
+  /** While the grip is held, apply the controller's frame-to-frame rotation to the
+   *  content's yaw and pitch — a 1:1 grab-and-turn. Roll is ignored. */
+  private handleGrab(): void {
+    if (this.grabbing === null) return;
+    if (!this.connected[this.grabbing]) { this.grabbing = null; return; }
+    const cur = this.controllers[this.grabbing].getWorldQuaternion(this.grabQuat);
+    this.deltaQuat.copy(this.prevGrabQuat).invert().premultiply(cur); // cur * prev⁻¹ (world-space delta)
+    this.grabEuler.setFromQuaternion(this.deltaQuat, 'YXZ');
+    this.actions.adjustYaw(this.grabEuler.y);
+    this.actions.adjustTilt(this.grabEuler.x);
+    this.prevGrabQuat.copy(cur);
   }
 
   private pollToggle(): void {
