@@ -7,8 +7,11 @@ export interface PlayerBridge {
   video: HTMLVideoElement;
   surface: HTMLElement;            // canvas — for wheel-zoom
   fullscreenTarget: HTMLElement;
-  vrButton: HTMLElement;
   vrSupported(): Promise<boolean>;
+  enterVR(): Promise<void>;
+  exitVR(): void;
+  isPresenting(): boolean;
+  onVrChange(cb: (presenting: boolean) => void): void;
   getProjection(): Projection | 'off';
   setProjection(p: Projection | 'off'): void;
   setSwapEyes(v: boolean): void;
@@ -48,8 +51,8 @@ export class ControlsUI {
     const volPopup = h('div', { class: 'tvp-volpopup', hidden: true }, [volume]);
     const volWrap = h('span', { class: 'tvp-volwrap' }, [mute, volPopup]);
 
-    // --- VR slot ---
-    const vrSlot = h('span', { class: 'tvp-vrslot' });
+    // --- VR ---
+    const vrBtn = h('button', { class: 'tvp-btn tvp-vrbtn', title: 'Enter VR', textContent: '🥽', hidden: true });
 
     // --- projection menu ---
     const projBtn = h('button', { class: 'tvp-btn tvp-projbtn', title: 'Projection', textContent: '🌐' });
@@ -68,7 +71,7 @@ export class ControlsUI {
     const settingsBtn = h('button', { class: 'tvp-btn tvp-settingsbtn', title: 'Settings', textContent: '⚙' });
     const fullscreen = h('button', { class: 'tvp-btn tvp-fullscreen', title: 'Fullscreen', textContent: '⛶' });
 
-    const controls = h('footer', { class: 'tvp-controls' }, [play, seek, time, volWrap, vrSlot, projWrap, settingsBtn, fullscreen]);
+    const controls = h('footer', { class: 'tvp-controls' }, [play, seek, time, volWrap, vrBtn, projWrap, settingsBtn, fullscreen]);
 
     const swapCb = h('input', { type: 'checkbox', checked: bridge.initial.swapEyes });
     const fovRange = h('input', { type: 'range', min: '30', max: '100', step: '1', value: String(bridge.initial.fov) });
@@ -101,8 +104,30 @@ export class ControlsUI {
     const setSeekFill = (pct: number) => seek.style.setProperty('--seek', `${pct}%`);
     // Only one popup (volume / projection / settings) open at a time.
     const closeMenus = () => { volPopup.hidden = true; projMenu.hidden = true; settings.classList.remove('open'); };
+    let toastTimer = 0;
+    const showToast = (msg: string) => {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = window.setTimeout(() => toast.classList.remove('show'), 4500);
+    };
 
-    on(play, 'click', () => { v.paused ? void v.play() : v.pause(); });
+    // Fire on a real pointer tap. The Meta Quest controller ray often fails to
+    // synthesize `click` on <button> (tiny ray movement between press/release exceeds
+    // the click threshold), while pointerup always fires. We trigger on pointerup and
+    // keep `click` for keyboard/assistive tech, deduped so each activation fires once.
+    // (pointerup carries transient activation too, so WebXR requestSession still works.)
+    const onTap = (el: HTMLElement, fn: (e: Event) => void) => {
+      let downOn = false;
+      let firedAt = -1e9;
+      const run = (e: Event) => { firedAt = e.timeStamp; fn(e); };
+      on(el, 'pointerdown', () => { downOn = true; });
+      on(el, 'pointercancel', () => { downOn = false; });
+      on(el, 'pointerup', (e: Event) => { if (downOn) { downOn = false; run(e); } });
+      on(el, 'click', (e: Event) => { if (e.timeStamp - firedAt > 700) run(e); });
+    };
+
+    onTap(play, () => { v.paused ? void v.play() : v.pause(); });
     on(v, 'play', () => { play.textContent = '⏸'; });
     on(v, 'pause', () => { play.textContent = '▶'; });
 
@@ -119,7 +144,7 @@ export class ControlsUI {
       if (v.duration) v.currentTime = (Number(seek.value) / 1000) * v.duration;
     });
 
-    on(mute, 'click', (e: Event) => { e.stopPropagation(); const open = volPopup.hidden; closeMenus(); volPopup.hidden = !open; });
+    onTap(mute, () => { const open = volPopup.hidden; closeMenus(); volPopup.hidden = !open; });
     on(volume, 'input', () => { v.volume = Number(volume.value); v.muted = v.volume === 0; mute.textContent = v.muted ? '🔇' : '🔊'; });
 
     const updateProjection = () => {
@@ -132,14 +157,14 @@ export class ControlsUI {
       });
       projBtn.title = label;
     };
-    on(projBtn, 'click', (e: Event) => { e.stopPropagation(); const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
-    on(projMenu, 'click', (e: Event) => {
+    onTap(projBtn, () => { const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
+    onTap(projMenu, (e: Event) => {
       const b = (e.target as HTMLElement).closest('button[data-mode]') as HTMLElement | null;
       if (b) { bridge.setProjection(b.dataset.mode as Projection | 'off'); updateProjection(); projMenu.hidden = true; }
     });
     updateProjection();
 
-    on(settingsBtn, 'click', (e: Event) => { e.stopPropagation(); const open = !settings.classList.contains('open'); closeMenus(); settings.classList.toggle('open', open); });
+    onTap(settingsBtn, () => { const open = !settings.classList.contains('open'); closeMenus(); settings.classList.toggle('open', open); });
     on(swapCb, 'change', () => bridge.setSwapEyes(swapCb.checked));
     on(fovRange, 'input', () => { const d = Number(fovRange.value); fovVal.textContent = String(d); bridge.setFov(d); });
     on(ssRange, 'input', () => { const x = Number(ssRange.value); ssVal.textContent = String(x); bridge.setSupersampling(x); });
@@ -153,14 +178,14 @@ export class ControlsUI {
       fovRange.value = String(next); fovVal.textContent = String(next); bridge.setFov(next);
     }, { passive: false });
 
-    on(fullscreen, 'click', () => {
+    onTap(fullscreen, () => {
       const t = bridge.fullscreenTarget;
       if (!document.fullscreenElement) void t.requestFullscreen?.();
       else void document.exitFullscreen?.();
     });
 
-    // outside-click closes any open popup (composedPath crosses the shadow boundary)
-    on(document, 'click', (e: Event) => {
+    // outside-tap closes any open popup (pointerdown fires reliably on Quest; click may not)
+    on(document, 'pointerdown', (e: Event) => {
       const path = (e as Event & { composedPath(): EventTarget[] }).composedPath();
       const inside = (el: Node) => path.includes(el);
       if (![volPopup, mute, projMenu, projBtn, settings, settingsBtn].some(inside)) closeMenus();
@@ -178,15 +203,14 @@ export class ControlsUI {
     showBar();
 
     // VR button only when an immersive-VR device is available
-    void bridge.vrSupported().then((ok) => {
-      if (ok) {
-        Object.assign(bridge.vrButton.style, { position: 'static', left: 'auto', bottom: 'auto', transform: 'none', margin: '0' });
-        vrSlot.append(bridge.vrButton);
-      }
+    void bridge.vrSupported().then((ok) => { vrBtn.hidden = !ok; });
+    onTap(vrBtn, () => {
+      if (bridge.isPresenting()) { bridge.exitVR(); return; }
+      // requestSession is the first thing off the tap so it keeps the user gesture;
+      // any rejection is surfaced instead of silently swallowed.
+      bridge.enterVR().catch((err: unknown) => showToast(err instanceof Error ? err.message : 'Could not enter VR.'));
     });
-
-    // silence unused-var lint for the toast helper (available for future use)
-    void toast;
+    bridge.onVrChange((presenting) => { vrBtn.classList.toggle('active', presenting); vrBtn.title = presenting ? 'Exit VR' : 'Enter VR'; });
   }
 
   dispose() {

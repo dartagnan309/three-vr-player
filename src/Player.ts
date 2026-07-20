@@ -84,8 +84,11 @@ export class Player {
         video: this.video,
         surface: this.canvas,
         fullscreenTarget: this.wrap,
-        vrButton: this.scene.vrButton,
         vrSupported: () => this.vrSupported(),
+        enterVR: () => this.enterVR(),
+        exitVR: () => this.scene.exitVR(),
+        isPresenting: () => this.scene.renderer.xr.isPresenting,
+        onVrChange: (cb) => { this.on('enterxr', () => cb(true)); this.on('exitxr', () => cb(false)); },
         getProjection: () => this.displayMode,
         setProjection: (p) => this.setProjection(p),
         setSwapEyes: (v) => this.setSwapEyes(v),
@@ -105,6 +108,8 @@ export class Player {
     this.video.addEventListener('loadedmetadata', () => { if (!this.readyEmitted) { this.readyEmitted = true; this.emit('ready'); } });
     this.scene.renderer.xr.addEventListener('sessionstart', () => this.emit('enterxr'));
     this.scene.renderer.xr.addEventListener('sessionend', () => this.emit('exitxr'));
+    // Arm the headset/browser's own "Enter VR" affordance when immersive VR is available.
+    void this.vrSupported().then((ok) => { if (ok) this.scene.offerVR(); });
 
     if (options.src) void this.load(options.src, { projection: options.projection });
   }
@@ -205,10 +210,10 @@ export class Player {
     if (this.currentSrc) void this.load(this.currentSrc);
   }
 
-  async enterVR() {
-    const btn = this.scene.vrButton as HTMLButtonElement;
-    btn?.click?.();
-  }
+  /** Enter immersive VR. Rejects if the WebXR session request fails (e.g. no headset,
+   *  or a non-secure origin) — the built-in controls surface the reason as a toast. */
+  async enterVR() { await this.scene.enterVR(); }
+  exitVR() { this.scene.exitVR(); }
 
   get three() { return { renderer: this.scene.renderer, scene: this.scene.scene, camera: this.scene.camera }; }
 

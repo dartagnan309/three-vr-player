@@ -42,7 +42,7 @@
 .tvp-projmenu button:hover { background:#252b39; }
 .tvp-projmenu button.active { background:#4f8cff; color:#fff; }
 
-.tvp-vrslot button { position:static !important; }
+.tvp-btn.active { color:#4f8cff; }
 
 .tvp-settings { position:absolute; bottom:62px; right:10px; width:300px; max-width:calc(100% - 20px);
   max-height:70%; overflow-y:auto; background:rgba(18,20,24,.92); backdrop-filter:blur(8px);
