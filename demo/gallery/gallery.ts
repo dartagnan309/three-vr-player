@@ -56,9 +56,12 @@ let active: { player: Player; card: HTMLElement } | null = null;
 
 function stopActive(): void {
   if (!active) return;
-  active.player.dispose();
-  active.card.classList.remove('loading', 'playing');
+  // Null out first: dispose() may end the XR session and re-fire 'exitxr', which calls
+  // back here — the early return above then makes the re-entrant call a no-op.
+  const { player, card } = active;
   active = null;
+  player.dispose();
+  card.classList.remove('loading', 'playing');
 }
 
 for (const item of ITEMS) {
@@ -87,6 +90,9 @@ for (const item of ITEMS) {
     player.on('ready', reveal);
     player.on('fallback', reveal);
     player.on('error', () => { if (active?.card === card) stopActive(); });
+    // Leaving the immersive session ends the viewing — tear down the player and restore
+    // the card's poster + play button rather than dropping back into the in-page 3D view.
+    player.on('exitxr', () => { if (active?.card === card) stopActive(); });
 
     // Headset present: go straight into an immersive session from this tap rather than playing
     // in the page. The request runs synchronously off the pointer event so it keeps the
