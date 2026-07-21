@@ -20,6 +20,10 @@ export interface VRControlsActions {
   adjustTilt(delta: number): void;
   adjustYaw(delta: number): void;
   adjustZoom(delta: number): void;
+  /** Passthrough (alpha) content only: whether the toggle applies, its state, and the toggle. */
+  passthroughAvailable(): boolean;
+  passthroughEnabled(): boolean;
+  togglePassthrough(): void;
 }
 
 const ACCENT = '#4f8cff';
@@ -229,6 +233,7 @@ export class VRControls {
     switch (hit.region) {
       case 'play': this.actions.togglePlay(); break;
       case 'exit': this.actions.exitVR(); break;
+      case 'passthrough': if (this.actions.passthroughAvailable()) this.actions.togglePassthrough(); break;
       case 'recenter': this.actions.recenter(); this.placeFrames = 12; break; // re-place the panel in the new frame
 
       case 'seek': if (hit.value !== undefined) this.actions.seekFraction(hit.value); break;
@@ -375,7 +380,8 @@ export class VRControls {
   private paint(force: boolean): void {
     const cur = this.actions.currentTime(), dur = this.actions.duration();
     const vol = this.actions.volume(), muted = this.actions.muted();
-    const key = [this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title()].join('|');
+    const ptOn = this.actions.passthroughAvailable() && this.actions.passthroughEnabled();
+    const key = [this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn].join('|');
     if (!force && key === this.paintKey) return;
     this.paintKey = key;
 
@@ -399,6 +405,16 @@ export class VRControls {
     // Top pills
     this.drawPill(L.recenter, 'Recenter', this.hover === 'recenter');
     this.drawPill(L.exit, 'Exit VR', this.hover === 'exit');
+    // Passthrough toggle (alpha content only): filled/accent when ON, white border on hover.
+    if (this.actions.passthroughAvailable()) {
+      const r = L.passthrough, on = this.actions.passthroughEnabled();
+      this.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
+      c.fillStyle = on ? ACCENT : 'rgba(255,255,255,0.12)'; c.fill();
+      if (this.hover === 'passthrough') { c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.stroke(); }
+      c.fillStyle = on ? '#fff' : TEXT;
+      c.font = '600 24px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+      c.fillText('Passthrough', r.x + r.w / 2, r.y + r.h / 2);
+    }
 
     // Play / pause
     const pc = { x: L.play.x + L.play.w / 2, y: L.play.y + L.play.h / 2 };

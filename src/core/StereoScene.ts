@@ -29,8 +29,9 @@ export class StereoScene {
   private builtFov = 1;    // fov the current geometry was built at (rebuild throttle)
   private readonly frameCbs: (() => void)[] = [];
   private alphaFisheye = false;   // content has a DeoVR-style packed alpha matte
+  private passthroughOn = true;   // alpha content: key the subject over the real world (else opaque dome)
   // Uniforms shared with the alpha-fisheye shader; uPtShift/uTexel updated each eye in updateStereoUV.
-  private alphaUniforms?: { uPtShift: { value: number }; uTexel: { value: THREE.Vector2 } };
+  private alphaUniforms?: { uPtShift: { value: number }; uTexel: { value: THREE.Vector2 }; uAlphaEnabled: { value: number } };
   private vrControls?: VRControls;
   private readonly animate = (time?: number) => {
     for (const cb of this.frameCbs) cb();
@@ -98,10 +99,10 @@ export class StereoScene {
     // In-VR controls live only for the duration of an immersive session: the DOM
     // control bar isn't visible inside the headset, so we draw a panel in the scene.
     this.renderer.xr.addEventListener('sessionstart', () => {
-      // Passthrough sessions (immersive-ar) report a non-opaque blend mode; make the WebGL
-      // layer transparent so the real world shows through wherever we don't draw / draw alpha 0.
+      // Passthrough sessions (immersive-ar) report a non-opaque blend mode; start with
+      // passthrough on (transparent clear + keyed matte) so the real world shows through.
       const blend = (this.renderer.xr.getSession() as unknown as { environmentBlendMode?: string })?.environmentBlendMode;
-      if (blend && blend !== 'opaque') this.renderer.setClearAlpha(0);
+      if (blend && blend !== 'opaque') this.setPassthrough(true);
       this.buildVRControls();
     });
     this.renderer.xr.addEventListener('sessionend', () => {
@@ -135,6 +136,9 @@ export class StereoScene {
         adjustTilt: (d) => this.adjustTilt(d),
         adjustYaw: (d) => this.adjustYaw(d),
         adjustZoom: (d) => this.adjustZoom(d),
+        passthroughAvailable: () => this.alphaFisheye,
+        passthroughEnabled: () => this.passthroughOn,
+        togglePassthrough: () => this.setPassthrough(!this.passthroughOn),
       },
     });
   }
@@ -241,15 +245,20 @@ export class StereoScene {
    */
   private makeFisheyeAlphaMaterial(): THREE.MeshBasicMaterial {
     const mat = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, side: THREE.DoubleSide, depthWrite: false });
-    const uniforms = { uPtShift: { value: 0.4 }, uTexel: { value: new THREE.Vector2(1 / 8000, 1 / 4000) } };
+    const uniforms = {
+      uPtShift: { value: 0.4 },
+      uTexel: { value: new THREE.Vector2(1 / 8000, 1 / 4000) },
+      uAlphaEnabled: { value: this.passthroughOn ? 1 : 0 }, // 0 → opaque dome (passthrough off)
+    };
     this.alphaUniforms = uniforms;
     mat.onBeforeCompile = (shader) => {
       shader.uniforms.uPtShift = uniforms.uPtShift;
       shader.uniforms.uTexel = uniforms.uTexel;
+      shader.uniforms.uAlphaEnabled = uniforms.uAlphaEnabled;
       shader.vertexShader = 'varying vec2 vDiscUv;\n' +
         shader.vertexShader.replace('void main() {', 'void main() {\n\tvDiscUv = uv;');
       shader.fragmentShader =
-        'uniform float uPtShift;\nuniform vec2 uTexel;\nvarying vec2 vDiscUv;\n' +
+        'uniform float uPtShift;\nuniform vec2 uTexel;\nuniform float uAlphaEnabled;\nvarying vec2 vDiscUv;\n' +
         shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
         {
           vec2 n = (vDiscUv - 0.5) * 2.0;
@@ -261,10 +270,20 @@ export class StereoScene {
               s += texture2D(map, mUv + uTexel * vec2(float(dx), float(dy))).r;
             }
           }
-          diffuseColor.a *= smoothstep(0.0, 0.8, s / 9.0);
+          // uAlphaEnabled 1 → keyed matte (passthrough); 0 → fully opaque dome (no passthrough)
+          diffuseColor.a *= mix(1.0, smoothstep(0.0, 0.8, s / 9.0), uAlphaEnabled);
         }`);
     };
     return mat;
+  }
+
+  /** Passthrough on/off for alpha content: on = key the subject over the real world (matte +
+   *  transparent clear); off = opaque fisheye dome on a black surround (VR-style, no passthrough). */
+  setPassthrough(on: boolean): void {
+    this.passthroughOn = on;
+    if (this.alphaUniforms) this.alphaUniforms.uAlphaEnabled.value = on ? 1 : 0;
+    const blend = (this.renderer.xr.getSession() as unknown as { environmentBlendMode?: string })?.environmentBlendMode;
+    if (blend && blend !== 'opaque') this.renderer.setClearAlpha(on ? 0 : 1);
   }
 
   /** Mark the current content as carrying a DeoVR-style packed alpha matte (fisheye only). */

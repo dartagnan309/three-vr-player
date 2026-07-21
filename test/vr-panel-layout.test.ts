@@ -20,6 +20,11 @@ describe('vr panel hitTest', () => {
     expect(hitTest(p.x, p.y)).toEqual({ region: 'recenter' });
   });
 
+  it('hits the passthrough toggle top row', () => {
+    const p = mid(L.passthrough);
+    expect(hitTest(p.x, p.y)).toEqual({ region: 'passthrough' });
+  });
+
   it('reads a seek fraction from the bar position', () => {
     const y = L.seekBar.y + L.seekBar.h / 2;
     expect(hitTest(L.seekBar.x, y)?.value).toBeCloseTo(0, 2);
