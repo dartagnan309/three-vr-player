@@ -39,6 +39,14 @@ export const PROJECTIONS: { value: Projection; label: string }[] = [
   { value: 'flat-sbs-half', label: 'Flat 3D — Half SBS' },
 ];
 
+/** Compact labels for the in-VR projection stepper (the full labels are too long for the panel). */
+export const PROJECTION_SHORT: Record<Projection, string> = {
+  '180-sbs': '180° SBS', '180-mono': '180° Mono',
+  '360-mono': '360° Mono', '360-sbs': '360° SBS', '360-tb': '360° TB',
+  'fisheye190-sbs': 'Fisheye SBS', 'fisheye190-mono': 'Fisheye Mono',
+  'flat-2d': 'Flat 2D', 'flat-sbs-full': 'Flat SBS', 'flat-sbs-half': 'Flat SBS½',
+};
+
 export function isFlatMode(p: Projection): boolean {
   return !!MODES[p]?.flat;
 }

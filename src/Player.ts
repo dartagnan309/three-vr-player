@@ -76,6 +76,8 @@ export class Player {
       fov: this.view.fov, supersampling: this.view.supersampling,
     });
     if (options.title) this.scene.setVRTitle(options.title);
+    // In-VR projection stepper routes through Player so its state/persistence/DOM controls stay in sync.
+    this.scene.setProjectionRequester((p) => this.setProjection(p));
     this.look = new LookControls(this.scene.camera, this.canvas, { isPresenting: () => this.scene.renderer.xr.isPresenting });
     this.scene.onFrame(() => this.look.update());
     this.look.setEnabled(!this.scene.isFlat());

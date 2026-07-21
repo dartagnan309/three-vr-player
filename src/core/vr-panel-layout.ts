@@ -9,7 +9,7 @@
 export const PANEL_W = 1024;
 export const PANEL_H = 340;
 
-export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'passthrough';
+export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'passthrough' | 'projPrev' | 'projNext';
 
 export interface Rect { x: number; y: number; w: number; h: number; }
 
@@ -22,6 +22,9 @@ export interface PanelLayout {
   play: Rect;
   volIcon: Rect;
   volBar: Rect;
+  projPrev: Rect;
+  projNext: Rect;
+  projLabel: Rect;   // display only (no hit-test) — the current projection name
   seekBar: Rect;
   timeCur: { x: number; y: number };
   timeDur: { x: number; y: number };
@@ -40,6 +43,10 @@ export function panelLayout(): PanelLayout {
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },
     volIcon: { x: pad, y: 178, w: 44, h: 44 },
     volBar:  { x: pad + 60, y: 192, w: 200, h: 16 },
+    // Projection stepper on the right: ◀ [label] ▶
+    projPrev:  { x: 592, y: 178, w: 46, h: 46 },
+    projNext:  { x: W - 94, y: 178, w: 46, h: 46 },
+    projLabel: { x: 646, y: 178, w: W - 94 - 646, h: 46 },
     seekBar: { x: pad, y: 286, w: W - pad * 2, h: 14 },
     timeCur: { x: pad, y: 262 },
     timeDur: { x: W - pad, y: 262 },
@@ -69,6 +76,8 @@ export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout(
   if (inRect(layout.recenter, x, y)) return { region: 'recenter' };
   if (inRect(layout.passthrough, x, y)) return { region: 'passthrough' };
   if (inRect(layout.exit, x, y)) return { region: 'exit' };
+  if (inRect(layout.projPrev, x, y)) return { region: 'projPrev' };
+  if (inRect(layout.projNext, x, y)) return { region: 'projNext' };
   if (inRect(layout.play, x, y)) return { region: 'play' };
   if (inRect(layout.volIcon, x, y)) return { region: 'volume' }; // no value -> toggle mute
   if (inRect(layout.volBar, x, y, 12, BAR_PAD)) {

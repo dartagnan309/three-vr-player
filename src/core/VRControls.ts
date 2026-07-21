@@ -24,6 +24,9 @@ export interface VRControlsActions {
   passthroughAvailable(): boolean;
   passthroughEnabled(): boolean;
   togglePassthrough(): void;
+  /** Projection stepper: the current mode's short label, and step by ±1 through the modes. */
+  projectionLabel(): string;
+  cycleProjection(dir: number): void;
 }
 
 const ACCENT = '#4f8cff';
@@ -236,6 +239,8 @@ export class VRControls {
       case 'play': this.actions.togglePlay(); break;
       case 'exit': this.actions.exitVR(); break;
       case 'passthrough': if (this.actions.passthroughAvailable()) this.actions.togglePassthrough(); break;
+      case 'projPrev': this.actions.cycleProjection(-1); break;
+      case 'projNext': this.actions.cycleProjection(1); break;
       case 'recenter': this.actions.recenter(); this.placeFrames = 12; break; // re-place the panel in the new frame
 
       case 'seek': if (hit.value !== undefined) this.actions.seekFraction(hit.value); break;
@@ -387,7 +392,7 @@ export class VRControls {
     const cur = this.actions.currentTime(), dur = this.actions.duration();
     const vol = this.actions.volume(), muted = this.actions.muted();
     const ptOn = this.actions.passthroughAvailable() && this.actions.passthroughEnabled();
-    const key = [this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn].join('|');
+    const key = [this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn, this.actions.projectionLabel()].join('|');
     if (!force && key === this.paintKey) return;
     this.paintKey = key;
 
@@ -434,6 +439,15 @@ export class VRControls {
     const volFrac = muted ? 0 : Math.max(0, Math.min(1, vol));
     this.drawBar(L.volBar, volFrac, this.hover === 'volume');
 
+    // Projection stepper (right): caption + ◀ [label] ▶
+    const cxp = L.projLabel.x + L.projLabel.w / 2;
+    c.fillStyle = MUTED_TEXT; c.font = '600 15px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
+    c.fillText('PROJECTION', cxp, L.projPrev.y - 8);
+    this.drawIconButton(L.projPrev, this.hover === 'projPrev', false, (x, y, col) => this.iconArrow(x, y, -1, col));
+    this.drawIconButton(L.projNext, this.hover === 'projNext', false, (x, y, col) => this.iconArrow(x, y, 1, col));
+    c.fillStyle = TEXT; c.font = '600 26px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(this.ellipsize(this.actions.projectionLabel(), L.projLabel.w - 12), cxp, L.projLabel.y + L.projLabel.h / 2);
+
     // Seek + times
     const seekFrac = dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0;
     this.drawBar(L.seekBar, seekFrac, this.hover === 'seek', true);
@@ -479,6 +493,17 @@ export class VRControls {
     c.stroke();
     c.beginPath(); c.arc(cx, cy, 4, 0, Math.PI * 2); c.fill();
     if (off) { c.beginPath(); c.moveTo(cx - w, cy + h); c.lineTo(cx + w, cy - h); c.stroke(); }
+  }
+
+  /** A solid triangle pointing left (dir −1) or right (dir +1) — the projection stepper arrows. */
+  private iconArrow(cx: number, cy: number, dir: number, color: string): void {
+    const c = this.ctx, w = 8, h = 10;
+    c.fillStyle = color;
+    c.beginPath();
+    c.moveTo(cx + dir * w, cy);
+    c.lineTo(cx - dir * w, cy - h);
+    c.lineTo(cx - dir * w, cy + h);
+    c.closePath(); c.fill();
   }
 
   /** Exit — a door frame with an arrow pointing out to the right. */

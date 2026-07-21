@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Projection } from '../types.js';
-import { MODES } from './projections.js';
+import { MODES, PROJECTIONS, PROJECTION_SHORT } from './projections.js';
 import { VRControls } from './VRControls.js';
 
 
@@ -142,6 +142,8 @@ export class StereoScene {
         passthroughAvailable: () => this.inPassthroughSession, // any AR session, not just alpha content
         passthroughEnabled: () => this.passthroughOn,
         togglePassthrough: () => this.setPassthrough(!this.passthroughOn),
+        projectionLabel: () => this.projectionLabel(),
+        cycleProjection: (d) => this.cycleProjection(d),
       },
     });
   }
@@ -381,6 +383,19 @@ export class StereoScene {
   }
 
   setProjection(p: Projection) { this.applyProjection(p, this.currentSwap); }
+  /** Player registers this so an in-VR projection change flows back through Player — keeping its
+   *  state, persistence, and the DOM controls in sync. Falls back to a direct geometry swap. */
+  setProjectionRequester(cb: (p: Projection) => void) { this.projectionRequester = cb; }
+  private projectionRequester?: (p: Projection) => void;
+  /** Short label of the current projection, for the in-VR stepper. */
+  projectionLabel(): string { return PROJECTION_SHORT[this.currentMode] ?? this.currentMode; }
+  /** Step the projection by dir (±1) through the PROJECTIONS list (wraps around). */
+  cycleProjection(dir: number): void {
+    const list = PROJECTIONS.map((p) => p.value);
+    const i = Math.max(0, list.indexOf(this.currentMode));
+    const next = list[(i + dir + list.length) % list.length];
+    (this.projectionRequester ?? ((p: Projection) => this.setProjection(p)))(next);
+  }
   setSwapEyes(v: boolean) { this.applyProjection(this.currentMode, v); }
   setFov(deg: number) { this.camera.fov = deg; this.camera.updateProjectionMatrix(); }
   setSupersampling(ss: number) { this.renderer.setPixelRatio(this.pixelRatioFor(ss)); this.renderer.setSize(this.w(), this.h(), false); }
