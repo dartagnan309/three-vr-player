@@ -6,6 +6,13 @@
 Thumbs.db
 *.log
 
+# Local dev-only media (not committed)
+demo/_dev_*
+demo/*.mp4
+
+# Local reference material (third-party code kept for study, not redistributed)
+/reference/
+
 # Build output
 node_modules/
 dist/

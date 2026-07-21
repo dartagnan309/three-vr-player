@@ -18,6 +18,12 @@ describe('detectProjection', () => {
     expect(detectProjection('https://x/IPS_sample.mp4')).toBeNull();
     expect(detectProjection('https://youtube.com/watch?v=abc')).toBeNull();
   });
+  it('DeoVR fisheye (stereo by default, mono when tagged)', () => {
+    expect(detectProjection('sample_4000p_FISHEYE190_alpha.mp4')).toBe('fisheye190-sbs');
+    expect(detectProjection('https://x/clip_MKX200.mp4')).toBe('fisheye190-sbs');
+    expect(detectProjection('https://x/clip_rf52.mp4')).toBe('fisheye190-sbs');
+    expect(detectProjection('https://x/fisheye_mono.mp4')).toBe('fisheye190-mono');
+  });
 });
 
 describe('isFlatMode', () => {

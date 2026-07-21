@@ -1,6 +1,7 @@
 export type Projection =
   | '180-sbs' | '180-mono'
   | '360-mono' | '360-sbs' | '360-tb'
+  | 'fisheye190-sbs' | 'fisheye190-mono'
   | 'flat-2d' | 'flat-sbs-full' | 'flat-sbs-half';
 
 export interface PlayerOptions {
@@ -30,6 +31,11 @@ export interface PlayerOptions {
   vrButton?: boolean;
   /** Title shown on the in-VR control panel. Optional. */
   title?: string;
+  /**
+   * Content carries a DeoVR-style packed alpha matte (fisheye passthrough). When omitted, it's
+   * inferred from a `_ALPHA` marker in the source filename. Only affects fisheye projections.
+   */
+  alpha?: boolean;
   /**
    * If a cross-origin source can't be used as a WebGL texture (CORS-tainted) and
    * isn't proxied, fall back to plain 2D `<video>` playback instead of erroring.

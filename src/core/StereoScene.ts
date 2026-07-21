@@ -3,6 +3,7 @@ import type { Projection } from '../types.js';
 import { MODES } from './projections.js';
 import { VRControls } from './VRControls.js';
 
+
 /**
  * Maps a video onto the geometry for a chosen projection (inside-out 180/360
  * sphere or a flat screen plane). Stereo is done the way the reference VR180
@@ -27,6 +28,9 @@ export class StereoScene {
   private fov = 1;         // content field-of-view factor: 1 = full immersive, <1 = smaller/farther window
   private builtFov = 1;    // fov the current geometry was built at (rebuild throttle)
   private readonly frameCbs: (() => void)[] = [];
+  private alphaFisheye = false;   // content has a DeoVR-style packed alpha matte
+  // Uniforms shared with the alpha-fisheye shader; uPtShift/uTexel updated each eye in updateStereoUV.
+  private alphaUniforms?: { uPtShift: { value: number }; uTexel: { value: THREE.Vector2 } };
   private vrControls?: VRControls;
   private readonly animate = (time?: number) => {
     for (const cb of this.frameCbs) cb();
@@ -46,6 +50,9 @@ export class StereoScene {
   // Deliberately NOT requesting 'layers': it flips three.js to an XRProjectionLayer depth
   // path that flickers on the Quest.
   private readonly vrSessionInit: XRSessionInit = { optionalFeatures: ['local-floor'] };
+  // immersive-ar for passthrough. local-floor optional (widest support); the UA turns on
+  // camera passthrough (alpha-blend / additive blend mode) for the session automatically.
+  private readonly arSessionInit: XRSessionInit = { optionalFeatures: ['local-floor'] };
 
   constructor(opts: {
     canvas: HTMLCanvasElement; video: HTMLVideoElement;
@@ -57,7 +64,10 @@ export class StereoScene {
     this.currentMode = MODES[projection] ? projection : '180-sbs';
     this.currentSwap = swapEyes;
 
-    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true });
+    // alpha:true so the framebuffer can be transparent for immersive-ar passthrough. Keep the
+    // clear fully opaque black otherwise (VR + desktop are unaffected); AR flips clearAlpha to 0.
+    this.renderer = new THREE.WebGLRenderer({ canvas, antialias: true, alpha: true });
+    this.renderer.setClearColor(0x000000, 1);
     this.renderer.setPixelRatio(this.pixelRatioFor(supersampling));
     this.renderer.setSize(this.w(), this.h(), false);
     this.renderer.xr.enabled = true;
@@ -87,8 +97,15 @@ export class StereoScene {
 
     // In-VR controls live only for the duration of an immersive session: the DOM
     // control bar isn't visible inside the headset, so we draw a panel in the scene.
-    this.renderer.xr.addEventListener('sessionstart', () => this.buildVRControls());
+    this.renderer.xr.addEventListener('sessionstart', () => {
+      // Passthrough sessions (immersive-ar) report a non-opaque blend mode; make the WebGL
+      // layer transparent so the real world shows through wherever we don't draw / draw alpha 0.
+      const blend = (this.renderer.xr.getSession() as unknown as { environmentBlendMode?: string })?.environmentBlendMode;
+      if (blend && blend !== 'opaque') this.renderer.setClearAlpha(0);
+      this.buildVRControls();
+    });
     this.renderer.xr.addEventListener('sessionend', () => {
+      this.renderer.setClearAlpha(1); // restore opaque clear for desktop / next VR session
       this.vrControls?.dispose(); this.vrControls = undefined;
       this.video.pause(); // stop playback when leaving VR
     });
@@ -167,8 +184,94 @@ export class StereoScene {
       const g = new THREE.SphereGeometry(50, 64, 32, Math.PI - phiLen / 2, phiLen, Math.PI / 2 - thetaLen / 2, thetaLen);
       g.scale(-1, 1, 1); return g;
     }
+    if (kind === 'fisheye') return this.buildFisheyeDome();
     const h = 2.4 * f, w = h * this.planeAspect(mode);
     const g = new THREE.PlaneGeometry(w, h); g.translate(0, 0, -2); return g;
+  }
+
+  /**
+   * A dome covering the fisheye field of view (FISHEYE190 ≈ 190° → a 95° half-angle cap in
+   * front of the viewer), with equidistant-fisheye UVs: the angle from the forward axis maps
+   * linearly to radius on the texture disc (centre 0.5,0.5, radius 0.5). UVs are authored in
+   * full-frame [0,1] space; updateStereoUV's per-eye repeat/offset selects the L/R circle.
+   * Forward is −z (the camera's default view direction), so no extra rotation is needed.
+   */
+  private buildFisheyeDome(halfAngleDeg = 95): THREE.BufferGeometry {
+    const RINGS = 64, SECTORS = 128, R = 50;
+    const thetaMax = THREE.MathUtils.degToRad(halfAngleDeg);
+    const pos: number[] = [], uv: number[] = [], idx: number[] = [];
+    for (let i = 0; i <= RINGS; i++) {
+      const t = i / RINGS;             // 0 at centre (dead ahead), 1 at the rim
+      const theta = t * thetaMax;
+      const discR = t * 0.5;           // equidistant: disc radius ∝ angle from axis
+      const sinT = Math.sin(theta), cosT = Math.cos(theta);
+      for (let j = 0; j <= SECTORS; j++) {
+        const phi = (j / SECTORS) * Math.PI * 2;
+        const cp = Math.cos(phi), sp = Math.sin(phi);
+        pos.push(sinT * cp * R, sinT * sp * R, -cosT * R); // forward = −z
+        uv.push(0.5 + discR * cp, 0.5 + discR * sp);
+      }
+    }
+    const stride = SECTORS + 1;
+    for (let i = 0; i < RINGS; i++) {
+      for (let j = 0; j < SECTORS; j++) {
+        const a = i * stride + j, b = a + 1, c = a + stride, d = c + 1;
+        idx.push(a, c, b, b, c, d);
+      }
+    }
+    const g = new THREE.BufferGeometry();
+    g.setAttribute('position', new THREE.Float32BufferAttribute(pos, 3));
+    g.setAttribute('uv', new THREE.Float32BufferAttribute(uv, 2));
+    g.setIndex(idx);
+    g.computeVertexNormals();
+    return g;
+  }
+
+  /**
+   * Transparent material for fisheye content with a DeoVR-style packed alpha matte. Built by
+   * patching MeshBasicMaterial (so three.js keeps handling colour management, the map sample and
+   * flipY) and injecting DeoVR's exact alpha decode (ported from their WebXR player):
+   *
+   *   ptUV = fract(vec2(discUV.x*0.2 + ptShift, discUV.y*0.4 + 0.8));   // ptShift 0.4 L / 0.9 R
+   *   alpha = smoothstep(0.0, 0.8, average of the 3×3 red neighbourhood at ptUV);
+   *
+   * The matte is a 0.4×-scaled copy of the disc's alpha stored per eye at that offset, wrapped
+   * across the frame edges (hence it appears tucked into the corners). It's indexed by the SAME
+   * disc UV as the colour, so it aligns exactly — including per-eye parallax. Outside the disc → clip.
+   */
+  private makeFisheyeAlphaMaterial(): THREE.MeshBasicMaterial {
+    const mat = new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, side: THREE.DoubleSide, depthWrite: false });
+    const uniforms = { uPtShift: { value: 0.4 }, uTexel: { value: new THREE.Vector2(1 / 8000, 1 / 4000) } };
+    this.alphaUniforms = uniforms;
+    mat.onBeforeCompile = (shader) => {
+      shader.uniforms.uPtShift = uniforms.uPtShift;
+      shader.uniforms.uTexel = uniforms.uTexel;
+      shader.vertexShader = 'varying vec2 vDiscUv;\n' +
+        shader.vertexShader.replace('void main() {', 'void main() {\n\tvDiscUv = uv;');
+      shader.fragmentShader =
+        'uniform float uPtShift;\nuniform vec2 uTexel;\nvarying vec2 vDiscUv;\n' +
+        shader.fragmentShader.replace('#include <map_fragment>', `#include <map_fragment>
+        {
+          vec2 n = (vDiscUv - 0.5) * 2.0;
+          if (dot(n, n) > 1.0) discard;                 // outside the fisheye circle
+          vec2 mUv = fract(vec2(vDiscUv.x * 0.2 + uPtShift, vDiscUv.y * 0.4 + 0.8));
+          float s = 0.0;                                // DeoVR getMask(): 3x3 red average
+          for (int dy = -1; dy <= 1; dy++) {
+            for (int dx = -1; dx <= 1; dx++) {
+              s += texture2D(map, mUv + uTexel * vec2(float(dx), float(dy))).r;
+            }
+          }
+          diffuseColor.a *= smoothstep(0.0, 0.8, s / 9.0);
+        }`);
+    };
+    return mat;
+  }
+
+  /** Mark the current content as carrying a DeoVR-style packed alpha matte (fisheye only). */
+  setAlphaMatte(on: boolean) {
+    if (this.alphaFisheye === on) return;
+    this.alphaFisheye = on;
+    this.applyProjection(this.currentMode, this.currentSwap);
   }
 
   /** Shift the shared video texture for the eye/half being drawn. Runs from the mesh's
@@ -195,6 +298,13 @@ export class StereoScene {
     if (split === 'sbs') { map.repeat.set(0.5, 1); map.offset.set(second ? 0.5 : 0, 0); }
     else if (split === 'tb') { map.repeat.set(1, 0.5); map.offset.set(0, second ? 0 : 0.5); }
     else { map.repeat.set(1, 1); map.offset.set(0, 0); }
+    // Alpha-fisheye: each eye reads its own packed matte (x-offset 0.4 left / 0.9 right), and
+    // the 3×3 getMask blur needs the video's texel size.
+    if (this.alphaUniforms) {
+      this.alphaUniforms.uPtShift.value = second ? 0.9 : 0.4;
+      const vw = this.video.videoWidth, vh = this.video.videoHeight;
+      if (vw && vh) this.alphaUniforms.uTexel.value.set(1 / vw, 1 / vh);
+    }
   }
 
   private clearMeshes() {
@@ -206,9 +316,18 @@ export class StereoScene {
     if (!MODES[mode]) mode = '180-sbs';
     this.clearMeshes();
     this.currentMode = mode; this.currentSwap = swap;
-    // One mesh (reference approach), plain FrontSide MeshBasicMaterial. Stereo is handled
-    // per eye by updateStereoUV via onBeforeRender — not by per-eye meshes or camera layers.
-    const mesh = new THREE.Mesh(this.buildGeometry(mode), new THREE.MeshBasicMaterial({ map: this.texture }));
+    // One mesh (reference approach), plain MeshBasicMaterial. Stereo is handled per eye by
+    // updateStereoUV via onBeforeRender — not by per-eye meshes or camera layers. Spheres are
+    // scaled inside-out (FrontSide); the fisheye dome isn't, so it's viewed as DoubleSide.
+    this.alphaUniforms = undefined;
+    let material: THREE.Material;
+    if (MODES[mode].geom === 'fisheye' && this.alphaFisheye) {
+      material = this.makeFisheyeAlphaMaterial();          // transparent, reconstructs packed alpha
+    } else {
+      const side = MODES[mode].geom === 'fisheye' ? THREE.DoubleSide : THREE.FrontSide;
+      material = new THREE.MeshBasicMaterial({ map: this.texture, side });
+    }
+    const mesh = new THREE.Mesh(this.buildGeometry(mode), material);
     mesh.layers.set(0); // desktop + both XR eyes see the single mesh
     if (MODES[mode].geom === 'sphere180') mesh.rotation.y = Math.PI / 2; // orient the 180 gore forward
     mesh.onBeforeRender = (_r, _s, cam) => this.updateStereoUV(cam);
@@ -254,6 +373,14 @@ export class StereoScene {
   async enterVR(): Promise<void> {
     if (!navigator.xr) throw new Error('WebXR is unavailable here — open the page over HTTPS or localhost.');
     const session = await navigator.xr.requestSession('immersive-vr', this.vrSessionInit);
+    await this.renderer.xr.setSession(session);
+  }
+  /** Enter immersive AR (passthrough). Same contract as enterVR — called from a click so it
+   *  keeps transient activation, rejects with a readable message. The UA composites our
+   *  transparent framebuffer over the camera feed. */
+  async enterAR(): Promise<void> {
+    if (!navigator.xr) throw new Error('WebXR is unavailable here — open the page over HTTPS or localhost.');
+    const session = await navigator.xr.requestSession('immersive-ar', this.arSessionInit);
     await this.renderer.xr.setSession(session);
   }
   exitVR(): void {

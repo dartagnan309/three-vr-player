@@ -120,10 +120,18 @@ export class Player {
     return navigator.xr.isSessionSupported('immersive-vr').catch(() => false);
   }
 
+  /** Whether immersive-ar (passthrough) is available — used for alpha/fisheye content. */
+  arSupported(): Promise<boolean> {
+    if (!navigator.xr) return Promise.resolve(false);
+    return navigator.xr.isSessionSupported('immersive-ar').catch(() => false);
+  }
+
   async load(src: string, o: { projection?: Projection } = {}): Promise<void> {
     this.currentSrc = src;
     const proj = o.projection ?? (this.opts.autoDetect !== false ? detectProjection(src) : null);
     if (proj) this.applyProjectionGeometry(proj);
+    // Packed alpha matte (fisheye passthrough): explicit option, else DeoVR's `_ALPHA` filename marker.
+    this.scene.setAlphaMatte(this.opts.alpha ?? /_alpha/i.test(src));
     if (this.displayMode !== 'off') this.displayMode = this.view.projection;
     const { url, format } = buildProxyUrl(src, this.useProxy ? this.proxyConfig : undefined);
     const primaryCO = this.opts.crossOrigin === undefined ? 'anonymous' : this.opts.crossOrigin;
@@ -214,6 +222,8 @@ export class Player {
   /** Enter immersive VR. Rejects if the WebXR session request fails (e.g. no headset,
    *  or a non-secure origin) — the built-in controls surface the reason as a toast. */
   async enterVR() { await this.scene.enterVR(); }
+  /** Enter immersive AR (passthrough) — for alpha/fisheye content. */
+  async enterAR() { await this.scene.enterAR(); }
   exitVR() { this.scene.exitVR(); }
 
   get three() { return { renderer: this.scene.renderer, scene: this.scene.scene, camera: this.scene.camera }; }

@@ -12,7 +12,11 @@
     "esModuleInterop": true,
     "isolatedModules": true,
     "verbatimModuleSyntax": true,
-    "types": ["vitest/globals"]
+    "types": ["vitest/globals"],
+    "baseUrl": ".",
+    // Resolve the package name to source for typechecking (mirrors the Vite dev alias), so the
+    // demo checks against src rather than a possibly-stale built dist/.
+    "paths": { "three-vr-player": ["src/index.ts"] }
   },
   "include": ["src", "test", "demo"]
 }

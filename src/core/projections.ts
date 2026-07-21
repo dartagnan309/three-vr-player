@@ -1,7 +1,7 @@
 import type { Projection } from '../types.js';
 
 export type Split = 'mono' | 'sbs' | 'tb';
-export type GeomKind = 'sphere180' | 'sphere360' | 'plane';
+export type GeomKind = 'sphere180' | 'sphere360' | 'fisheye' | 'plane';
 
 export interface ModeConfig {
   geom: GeomKind;
@@ -18,6 +18,9 @@ export const MODES: Record<Projection, ModeConfig> = {
   '360-mono':      { geom: 'sphere360', split: 'mono', stereo: false },
   '360-sbs':       { geom: 'sphere360', split: 'sbs',  stereo: true },
   '360-tb':        { geom: 'sphere360', split: 'tb',   stereo: true },
+  // DeoVR-style fisheye (~190°): a dome in front of the viewer, one circle per eye.
+  'fisheye190-sbs':  { geom: 'fisheye', split: 'sbs',  stereo: true },
+  'fisheye190-mono': { geom: 'fisheye', split: 'mono', stereo: false },
   'flat-2d':       { geom: 'plane',     split: 'mono', stereo: false, flat: true, aspect: 'full' },
   'flat-sbs-full': { geom: 'plane',     split: 'sbs',  stereo: true,  flat: true, aspect: 'per-eye' },
   'flat-sbs-half': { geom: 'plane',     split: 'sbs',  stereo: true,  flat: true, aspect: 'full' },
@@ -29,6 +32,8 @@ export const PROJECTIONS: { value: Projection; label: string }[] = [
   { value: '360-mono', label: '360° Mono' },
   { value: '360-sbs', label: '360° SBS' },
   { value: '360-tb', label: '360° Top-Bottom' },
+  { value: 'fisheye190-sbs', label: 'Fisheye 190° SBS' },
+  { value: 'fisheye190-mono', label: 'Fisheye 190° Mono' },
   { value: 'flat-2d', label: 'Flat 2D' },
   { value: 'flat-sbs-full', label: 'Flat 3D — Full SBS' },
   { value: 'flat-sbs-half', label: 'Flat 3D — Half SBS' },
@@ -43,6 +48,10 @@ export function detectProjection(url: string): Projection | null {
   const s = String(url).toLowerCase();
   const tb = /(^|[^a-z])(tb|ou|top.?bottom|over.?under)([^a-z]|$)/.test(s);
   const sbs = /(sbs|side.?by.?side)/.test(s);
+  // DeoVR fisheye (FISHEYE190 / MKX200 / RF52 / VRCA220) — stereo unless tagged mono.
+  if (/(fisheye|mkx200|rf52|vrca220)/.test(s)) {
+    return s.includes('mono') ? 'fisheye190-mono' : 'fisheye190-sbs';
+  }
   if (s.includes('360')) {
     if (tb) return '360-tb';
     if (sbs) return '360-sbs';
