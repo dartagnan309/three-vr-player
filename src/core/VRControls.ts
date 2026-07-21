@@ -36,9 +36,11 @@ const IDLE_HIDE_MS = 8000;
 const MOTION_ROT = 0.05;            // radians
 const MOTION_POS = 0.02;            // metres
 const REVEAL_COOLDOWN_MS = 1500;    // don't re-summon on motion right after hiding
-// Right thumbstick X zooms (content fov); pitch/yaw are the grip grab-rotate. Tunable.
+// Right thumbstick: X zooms (content fov), Y tilts (pitch); the grip grab-rotate also does
+// pitch/yaw. Tunable.
 const STICK_DEADZONE = 0.15;
 const ZOOM_RATE = 0.012;            // content fov (stick X)
+const TILT_RATE = 0.012;            // radians/frame at full deflection (stick Y)
 const GRAB_TAP_ANGLE = 0.08;        // radians: a grip turned less than this is a tap (toggle), not a grab
 
 /** A world-locked control panel for immersive VR, drawn to a canvas texture and
@@ -266,18 +268,22 @@ export class VRControls {
     }
   }
 
-  /** Right thumbstick X zooms the content fov every frame it's held (push right =
-   *  zoom in). Pitch/yaw are handled by the grip grab-rotate, not the stick. */
+  /** Right thumbstick, applied every frame it's held: X zooms the content fov (push right =
+   *  zoom in), Y tilts the content pitch (push up = tilt up). The grip grab-rotate also does
+   *  pitch/yaw; the two coexist. */
   private handleThumbstick(): void {
     const session = this.renderer.xr.getSession();
     if (!session) return;
+    const ramp = (v: number) => Math.sign(v) * (Math.abs(v) - STICK_DEADZONE) / (1 - STICK_DEADZONE);
     for (const src of session.inputSources) {
       if (src.handedness !== 'right' || !src.gamepad) continue;
       const ax = src.gamepad.axes;
-      // xr-standard: thumbstick X at axes[2]; fall back to [0] on runtimes with only 2 axes.
+      // xr-standard: thumbstick X/Y at axes[2]/[3]; fall back to [0]/[1] on 2-axis runtimes.
       const x = ax.length >= 4 ? (ax[2] ?? 0) : (ax[0] ?? 0);
-      const a = Math.abs(x);
-      if (a > STICK_DEADZONE) this.actions.adjustZoom(Math.sign(x) * (a - STICK_DEADZONE) / (1 - STICK_DEADZONE) * ZOOM_RATE);
+      const y = ax.length >= 4 ? (ax[3] ?? 0) : (ax[1] ?? 0);
+      if (Math.abs(x) > STICK_DEADZONE) this.actions.adjustZoom(ramp(x) * ZOOM_RATE);
+      // Stick up reads as negative Y; tilt up = positive delta (matches the grab-rotate sign).
+      if (Math.abs(y) > STICK_DEADZONE) this.actions.adjustTilt(-ramp(y) * TILT_RATE);
       break;
     }
   }
