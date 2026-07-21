@@ -29,7 +29,8 @@ export class StereoScene {
   private builtFov = 1;    // fov the current geometry was built at (rebuild throttle)
   private readonly frameCbs: (() => void)[] = [];
   private alphaFisheye = false;   // content has a DeoVR-style packed alpha matte
-  private passthroughOn = true;   // alpha content: key the subject over the real world (else opaque dome)
+  private inPassthroughSession = false; // current XR session is immersive-ar (non-opaque blend)
+  private passthroughOn = true;   // passthrough on = real world visible (alpha content also keys the subject)
   // Uniforms shared with the alpha-fisheye shader; uPtShift/uTexel updated each eye in updateStereoUV.
   private alphaUniforms?: { uPtShift: { value: number }; uTexel: { value: THREE.Vector2 }; uAlphaEnabled: { value: number } };
   private vrControls?: VRControls;
@@ -102,11 +103,13 @@ export class StereoScene {
       // Passthrough sessions (immersive-ar) report a non-opaque blend mode; start with
       // passthrough on (transparent clear + keyed matte) so the real world shows through.
       const blend = (this.renderer.xr.getSession() as unknown as { environmentBlendMode?: string })?.environmentBlendMode;
-      if (blend && blend !== 'opaque') this.setPassthrough(true);
+      this.inPassthroughSession = !!(blend && blend !== 'opaque');
+      if (this.inPassthroughSession) this.setPassthrough(true);
       this.buildVRControls();
     });
     this.renderer.xr.addEventListener('sessionend', () => {
       this.renderer.setClearAlpha(1); // restore opaque clear for desktop / next VR session
+      this.inPassthroughSession = false;
       this.vrControls?.dispose(); this.vrControls = undefined;
       this.video.pause(); // stop playback when leaving VR
     });
@@ -136,7 +139,7 @@ export class StereoScene {
         adjustTilt: (d) => this.adjustTilt(d),
         adjustYaw: (d) => this.adjustYaw(d),
         adjustZoom: (d) => this.adjustZoom(d),
-        passthroughAvailable: () => this.alphaFisheye,
+        passthroughAvailable: () => this.inPassthroughSession, // any AR session, not just alpha content
         passthroughEnabled: () => this.passthroughOn,
         togglePassthrough: () => this.setPassthrough(!this.passthroughOn),
       },
@@ -277,8 +280,9 @@ export class StereoScene {
     return mat;
   }
 
-  /** Passthrough on/off for alpha content: on = key the subject over the real world (matte +
-   *  transparent clear); off = opaque fisheye dome on a black surround (VR-style, no passthrough). */
+  /** Passthrough on/off (immersive-ar only): on = real world visible (transparent clear); off =
+   *  opaque black surround (VR-style). Alpha content additionally keys the subject via the matte;
+   *  without a matte the dome stays opaque and only the surround changes. */
   setPassthrough(on: boolean): void {
     this.passthroughOn = on;
     if (this.alphaUniforms) this.alphaUniforms.uAlphaEnabled.value = on ? 1 : 0;
