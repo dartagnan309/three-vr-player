@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hitTest, panelLayout, PANEL_W } from '../src/core/vr-panel-layout.js';
+import { hitTest, panelLayout, PANEL_W, projGridLayout, projGridHitTest } from '../src/core/vr-panel-layout.js';
 
 const L = panelLayout();
 const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
@@ -25,9 +25,9 @@ describe('vr panel hitTest', () => {
     expect(hitTest(p.x, p.y)).toEqual({ region: 'passthrough' });
   });
 
-  it('hits the projection stepper arrows', () => {
-    expect(hitTest(mid(L.projPrev).x, mid(L.projPrev).y)).toEqual({ region: 'projPrev' });
-    expect(hitTest(mid(L.projNext).x, mid(L.projNext).y)).toEqual({ region: 'projNext' });
+  it('hits the projection button top row', () => {
+    const p = mid(L.projection);
+    expect(hitTest(p.x, p.y)).toEqual({ region: 'projection' });
   });
 
   it('reads a seek fraction from the bar position', () => {
@@ -57,5 +57,26 @@ describe('vr panel hitTest', () => {
 
   it('returns null for empty space', () => {
     expect(hitTest(PANEL_W / 2, 5)).toBeNull();
+  });
+});
+
+describe('projection grid hitTest', () => {
+  const G = projGridLayout();
+  const cellOf = (axis: string, value: string) =>
+    G.groups.flatMap((g) => g.cells).find((cl) => cl.axis === axis && cl.value === value)!;
+
+  it('hits the close button', () => {
+    expect(projGridHitTest(mid(G.close).x, mid(G.close).y)).toEqual({ region: 'close' });
+  });
+
+  it('hits each axis cell it draws', () => {
+    for (const [axis, value] of [['split', 'sbs'], ['type', 'fisheye'], ['angle', '210']] as const) {
+      const r = cellOf(axis, value).rect;
+      expect(projGridHitTest(r.x + r.w / 2, r.y + r.h / 2)).toEqual({ region: 'cell', axis, value });
+    }
+  });
+
+  it('returns null between rows', () => {
+    expect(projGridHitTest(PANEL_W / 2, 172)).toBeNull(); // gap between the Layout and Type rows
   });
 });

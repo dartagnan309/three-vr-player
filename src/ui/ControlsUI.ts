@@ -1,5 +1,8 @@
 import type { Projection } from '../types.js';
-import { PROJECTIONS } from '../core/projections.js';
+import {
+  composeProjection, decomposeProjection, FISHEYE_ANGLES,
+  type ProjType, type Split, type FisheyeAngle,
+} from '../core/projections.js';
 import { formatTime } from './format.js';
 
 /** What the ControlsUI needs from the Player to drive playback + view. */
@@ -54,17 +57,29 @@ export class ControlsUI {
     // --- VR ---
     const vrBtn = h('button', { class: 'tvp-btn tvp-vrbtn', title: 'Enter VR', textContent: '🥽', hidden: true });
 
-    // --- projection menu ---
+    // --- projection menu (decomposed grid: layout × type × fisheye-angle) ---
     const projBtn = h('button', { class: 'tvp-btn tvp-projbtn', title: 'Projection', textContent: '🌐' });
     const projMenu = h('div', { class: 'tvp-projmenu', hidden: true });
-    for (const p of PROJECTIONS) {
-      const b = h('button', { textContent: p.label });
-      b.dataset.mode = p.value;
-      projMenu.append(b);
-    }
-    const offBtn = h('button', { textContent: 'Off (native player)' });
-    offBtn.dataset.mode = 'off';
-    projMenu.append(h('hr', { class: 'tvp-sep' }), offBtn);
+    // Build a labelled row of choice buttons; each carries data-axis + data-value.
+    const axisRow = (axis: string, caption: string, items: { value: string; label: string }[]): HTMLElement => {
+      const row = h('div', { class: 'tvp-projrow' }, items.map((it) => {
+        const b = h('button', { class: 'tvp-projopt', textContent: it.label });
+        b.dataset.axis = axis; b.dataset.value = it.value;
+        return b;
+      }));
+      return h('div', { class: 'tvp-projgroup' }, [h('span', { class: 'tvp-projcap', textContent: caption }), row]);
+    };
+    const layoutGroup = axisRow('split', 'Layout', [
+      { value: 'mono', label: 'Mono' }, { value: 'sbs', label: 'SBS' }, { value: 'tb', label: 'TB' },
+    ]);
+    const typeGroup = axisRow('type', 'Type', [
+      { value: 'flat', label: 'Flat' }, { value: '180', label: '180°' },
+      { value: '360', label: '360°' }, { value: 'fisheye', label: 'Fisheye' },
+    ]);
+    const angleGroup = axisRow('angle', 'Fisheye angle', FISHEYE_ANGLES.map((a) => ({ value: String(a), label: `${a}°` })));
+    const offBtn = h('button', { class: 'tvp-projopt tvp-projoff', textContent: 'Off (native player)' });
+    offBtn.dataset.axis = 'off'; offBtn.dataset.value = 'off';
+    projMenu.append(layoutGroup, typeGroup, angleGroup, h('hr', { class: 'tvp-sep' }), offBtn);
     const projWrap = h('span', { class: 'tvp-projwrap' }, [projBtn, projMenu]);
 
     // --- settings ---
@@ -147,20 +162,41 @@ export class ControlsUI {
     onTap(mute, () => { const open = volPopup.hidden; closeMenus(); volPopup.hidden = !open; });
     on(volume, 'input', () => { v.volume = Number(volume.value); v.muted = v.volume === 0; mute.textContent = v.muted ? '🔇' : '🔊'; });
 
+    // The grid edits one axis at a time, so it keeps a working (type, split, angle) even
+    // while output is 'off' (native player). Seeded from the current projection.
+    let lastProj: Projection = bridge.getProjection() === 'off' ? '180-sbs' : bridge.getProjection() as Projection;
     const updateProjection = () => {
       const mode = bridge.getProjection();
-      let label = 'Projection';
-      projMenu.querySelectorAll('button').forEach((b) => {
-        const on2 = b.dataset.mode === mode;
-        b.classList.toggle('active', on2);
-        if (on2) label = `Projection: ${b.textContent}`;
+      const off = mode === 'off';
+      if (!off) lastProj = mode as Projection;
+      const spec = decomposeProjection(lastProj);
+      const isFisheye = spec.type === 'fisheye';
+      angleGroup.classList.toggle('tvp-disabled', !isFisheye); // angle only applies to fisheye
+      projMenu.querySelectorAll<HTMLButtonElement>('button.tvp-projopt').forEach((b) => {
+        const { axis, value } = b.dataset;
+        const active =
+          axis === 'off' ? off :
+          off ? false :
+          axis === 'type' ? value === spec.type :
+          axis === 'split' ? value === spec.split :
+          axis === 'angle' ? (isFisheye && value === String(spec.angle)) : false;
+        b.classList.toggle('active', active);
       });
-      projBtn.title = label;
+      projBtn.title = off ? 'Projection: Off (native player)' : 'Projection';
     };
     onTap(projBtn, () => { const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
     onTap(projMenu, (e: Event) => {
-      const b = (e.target as HTMLElement).closest('button[data-mode]') as HTMLElement | null;
-      if (b) { bridge.setProjection(b.dataset.mode as Projection | 'off'); updateProjection(); projMenu.hidden = true; }
+      const b = (e.target as HTMLElement).closest('button.tvp-projopt') as HTMLButtonElement | null;
+      if (!b || b.closest('.tvp-disabled')) return;
+      const { axis, value } = b.dataset;
+      const s = decomposeProjection(lastProj);
+      let next: Projection | 'off';
+      if (axis === 'off') next = 'off';
+      else if (axis === 'type') next = composeProjection(value as ProjType, s.split, s.angle);
+      else if (axis === 'split') next = composeProjection(s.type, value as Split, s.angle);
+      else next = composeProjection('fisheye', s.split, Number(value) as FisheyeAngle); // angle → force fisheye
+      bridge.setProjection(next);
+      updateProjection();
     });
     updateProjection();
 

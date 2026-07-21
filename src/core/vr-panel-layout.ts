@@ -9,7 +9,7 @@
 export const PANEL_W = 1024;
 export const PANEL_H = 340;
 
-export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'passthrough' | 'projPrev' | 'projNext';
+export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'passthrough' | 'projection';
 
 export interface Rect { x: number; y: number; w: number; h: number; }
 
@@ -17,36 +17,33 @@ export interface PanelLayout {
   width: number; height: number;
   title: Rect;
   recenter: Rect;
+  projection: Rect;   // opens the projection sub-page
   passthrough: Rect;
   exit: Rect;
   play: Rect;
   volIcon: Rect;
   volBar: Rect;
-  projPrev: Rect;
-  projNext: Rect;
-  projLabel: Rect;   // display only (no hit-test) — the current projection name
+  projLabel: Rect;    // display only (no hit-test) — the current projection name
   seekBar: Rect;
   timeCur: { x: number; y: number };
   timeDur: { x: number; y: number };
 }
 
-/** Where every control sits on the panel canvas. A single source of truth. */
+/** Where every control sits on the main panel canvas. A single source of truth. */
 export function panelLayout(): PanelLayout {
   const W = PANEL_W, H = PANEL_H, pad = 48;
   return {
     width: W, height: H,
-    // Top-row icon buttons (reticle / eye / door-arrow). Compact so they read as icons, not labels.
+    // Top-row icon buttons (reticle / globe / eye / door-arrow). Compact so they read as icons.
     recenter:    { x: 30, y: 26, w: 64, h: 52 },
-    passthrough: { x: 108, y: 26, w: 64, h: 52 }, // toggle; shown only for alpha (passthrough) content
+    projection:  { x: 108, y: 26, w: 64, h: 52 }, // globe → opens the projection grid sub-page
+    passthrough: { x: 186, y: 26, w: 64, h: 52 }, // toggle; shown only in a passthrough (AR) session
     exit:        { x: W - 94, y: 26, w: 64, h: 52 },
     title:   { x: 0, y: 92, w: W, h: 44 },
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },
     volIcon: { x: pad, y: 178, w: 44, h: 44 },
     volBar:  { x: pad + 60, y: 192, w: 200, h: 16 },
-    // Projection stepper on the right: ◀ [label] ▶
-    projPrev:  { x: 592, y: 178, w: 46, h: 46 },
-    projNext:  { x: W - 94, y: 178, w: 46, h: 46 },
-    projLabel: { x: 646, y: 178, w: W - 94 - 646, h: 46 },
+    projLabel: { x: 560, y: 178, w: W - 94 - 560, h: 46 },
     seekBar: { x: pad, y: 286, w: W - pad * 2, h: 14 },
     timeCur: { x: pad, y: 262 },
     timeDur: { x: W - pad, y: 262 },
@@ -74,10 +71,9 @@ export interface VRHit {
 export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout()): VRHit | null {
   const BAR_PAD = 26;
   if (inRect(layout.recenter, x, y)) return { region: 'recenter' };
+  if (inRect(layout.projection, x, y)) return { region: 'projection' };
   if (inRect(layout.passthrough, x, y)) return { region: 'passthrough' };
   if (inRect(layout.exit, x, y)) return { region: 'exit' };
-  if (inRect(layout.projPrev, x, y)) return { region: 'projPrev' };
-  if (inRect(layout.projNext, x, y)) return { region: 'projNext' };
   if (inRect(layout.play, x, y)) return { region: 'play' };
   if (inRect(layout.volIcon, x, y)) return { region: 'volume' }; // no value -> toggle mute
   if (inRect(layout.volBar, x, y, 12, BAR_PAD)) {
@@ -85,6 +81,72 @@ export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout(
   }
   if (inRect(layout.seekBar, x, y, 12, BAR_PAD)) {
     return { region: 'seek', value: clamp01((x - layout.seekBar.x) / layout.seekBar.w) };
+  }
+  return null;
+}
+
+// ---- Projection sub-page: a decomposed grid (layout × type × fisheye-angle) ----
+
+export type ProjAxis = 'split' | 'type' | 'angle';
+export interface ProjCell { axis: ProjAxis; value: string; label: string; rect: Rect; }
+export interface ProjGroup { caption: string; captionY: number; cells: ProjCell[]; }
+export interface ProjGridLayout {
+  width: number; height: number;
+  close: Rect;
+  title: { x: number; y: number };
+  groups: ProjGroup[];
+}
+
+/** Evenly space `n` buttons of height `h` across the panel's padded width at row top `top`. */
+function cols(n: number, top: number, h: number, W = PANEL_W, pad = 40, gap = 16): Rect[] {
+  const usable = W - pad * 2;
+  const w = (usable - gap * (n - 1)) / n;
+  return Array.from({ length: n }, (_, i) => ({ x: pad + i * (w + gap), y: top, w, h }));
+}
+
+function group(caption: string, captionY: number, rowTop: number, h: number, items: { axis: ProjAxis; value: string; label: string }[]): ProjGroup {
+  const rects = cols(items.length, rowTop, h);
+  return { caption, captionY, cells: items.map((it, i) => ({ ...it, rect: rects[i] })) };
+}
+
+/** Layout of the projection grid sub-page. */
+export function projGridLayout(): ProjGridLayout {
+  const H = 52;
+  return {
+    width: PANEL_W, height: PANEL_H,
+    close: { x: PANEL_W - 84, y: 22, w: 60, h: 48 }, // ✕ top-right, like the reference popup
+    title: { x: 48, y: 52 },                         // "Projection" title, left-aligned
+    groups: [
+      group('Layout', 96, 108, H, [
+        { axis: 'split', value: 'mono', label: 'Mono' },
+        { axis: 'split', value: 'sbs', label: 'SBS' },
+        { axis: 'split', value: 'tb', label: 'TB' },
+      ]),
+      group('Type', 176, 188, H, [
+        { axis: 'type', value: 'flat', label: 'Flat' },
+        { axis: 'type', value: '180', label: '180°' },
+        { axis: 'type', value: '360', label: '360°' },
+        { axis: 'type', value: 'fisheye', label: 'Fisheye' },
+      ]),
+      group('Fisheye angle', 256, 268, H, [
+        { axis: 'angle', value: '190', label: '190°' },
+        { axis: 'angle', value: '200', label: '200°' },
+        { axis: 'angle', value: '210', label: '210°' },
+        { axis: 'angle', value: '220', label: '220°' },
+      ]),
+    ],
+  };
+}
+
+export type ProjGridHit = { region: 'close' } | { region: 'cell'; axis: ProjAxis; value: string };
+
+/** Map a canvas-pixel point on the projection popup to a cell / the close button. */
+export function projGridHitTest(x: number, y: number, layout: ProjGridLayout = projGridLayout()): ProjGridHit | null {
+  if (inRect(layout.close, x, y)) return { region: 'close' };
+  for (const g of layout.groups) {
+    for (const cell of g.cells) {
+      if (inRect(cell.rect, x, y)) return { region: 'cell', axis: cell.axis, value: cell.value };
+    }
   }
   return null;
 }

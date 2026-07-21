@@ -1,6 +1,14 @@
 import * as THREE from 'three';
+import type { Projection } from '../types.js';
 import { formatTime } from '../ui/format.js';
-import { PANEL_W, PANEL_H, panelLayout, hitTest, type PanelLayout, type VRRegion, type Rect } from './vr-panel-layout.js';
+import {
+  composeProjection, decomposeProjection, PROJECTION_SHORT,
+  type ProjType, type Split, type FisheyeAngle,
+} from './projections.js';
+import {
+  PANEL_W, PANEL_H, panelLayout, hitTest, projGridLayout, projGridHitTest,
+  type PanelLayout, type VRRegion, type Rect, type ProjGridHit,
+} from './vr-panel-layout.js';
 
 /** The playback state + commands the panel needs. Kept small so the owner
  *  (StereoScene) can wire it straight to the `<video>` element. */
@@ -24,9 +32,9 @@ export interface VRControlsActions {
   passthroughAvailable(): boolean;
   passthroughEnabled(): boolean;
   togglePassthrough(): void;
-  /** Projection stepper: the current mode's short label, and step by ±1 through the modes. */
-  projectionLabel(): string;
-  cycleProjection(dir: number): void;
+  /** Projection grid: the current mode, and select a specific mode. */
+  currentProjection(): Projection;
+  setProjection(p: Projection): void;
 }
 
 const ACCENT = '#4f8cff';
@@ -59,6 +67,13 @@ export class VRControls {
   private readonly ctx: CanvasRenderingContext2D;
   private readonly texture: THREE.CanvasTexture;
   private readonly panel: THREE.Mesh;
+  // Projection chooser — a separate popup panel that floats above the main controls.
+  private readonly projCanvas: HTMLCanvasElement;
+  private readonly projCtx: CanvasRenderingContext2D;
+  private readonly projTexture: THREE.CanvasTexture;
+  private readonly projPanel: THREE.Mesh;
+  private panelH = 0;                     // main panel world height (for placing the popup above it)
+  private projPanelH = 0;                 // popup world height
   private readonly cursor: THREE.Mesh;   // white dot at the laser/panel intersection
 
   private readonly raycaster = new THREE.Raycaster();
@@ -81,8 +96,11 @@ export class VRControls {
   private readonly cleanups: (() => void)[] = [];
 
   private visible = false;
-  private hover: VRRegion | null = null;
+  private projOpen = false;                     // is the projection popup showing?
+  private hover: VRRegion | null = null;        // main-panel hover
+  private projHover: string | null = null;      // popup hover: 'close' or 'axis:value'
   private paintKey = '';
+  private projPaintKey = '';
   private idleAt = 0;
   private togglePrev = false;
   private placeFrames = 0;               // re-lock the panel to the head pose for a few frames after summon
@@ -101,6 +119,7 @@ export class VRControls {
     this.texture.minFilter = THREE.LinearFilter;
 
     const pw = 1.0, ph = (pw * PANEL_H) / PANEL_W; // ~3:1, ~35° wide at 1.6 m
+    this.panelH = ph;
     this.panel = new THREE.Mesh(
       new THREE.PlaneGeometry(pw, ph),
       new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
@@ -109,6 +128,24 @@ export class VRControls {
     this.panel.frustumCulled = false;
     this.panel.visible = false;
     this.scene.add(this.panel);
+
+    // Projection popup: its own canvas/texture/mesh, floated above the main panel on demand.
+    this.projCanvas = document.createElement('canvas');
+    this.projCanvas.width = PANEL_W; this.projCanvas.height = PANEL_H;
+    this.projCtx = this.projCanvas.getContext('2d')!;
+    this.projTexture = new THREE.CanvasTexture(this.projCanvas);
+    this.projTexture.colorSpace = THREE.SRGBColorSpace;
+    this.projTexture.minFilter = THREE.LinearFilter;
+    const ppw = 0.86, pph = (ppw * PANEL_H) / PANEL_W;
+    this.projPanelH = pph;
+    this.projPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(ppw, pph),
+      new THREE.MeshBasicMaterial({ map: this.projTexture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
+    );
+    this.projPanel.renderOrder = 12;   // above the main panel
+    this.projPanel.frustumCulled = false;
+    this.projPanel.visible = false;
+    this.scene.add(this.projPanel);
 
     this.cursor = new THREE.Mesh(
       new THREE.SphereGeometry(0.007, 16, 12),
@@ -159,6 +196,7 @@ export class VRControls {
     }
 
     this.paint(true);
+    this.paintProj(true);
     // Not shown on entry — summoned by the grip button or by moving a controller.
   }
 
@@ -186,8 +224,10 @@ export class VRControls {
     // Auto-hide after a spell of no aiming at the panel.
     if (this.idleAt && time > this.idleAt) { this.hide(); return; }
 
-    // Raycast both controllers; the one pointing at the panel wins the hover.
+    // Raycast both controllers against the popup (if open) first, then the main panel —
+    // the popup floats on top, so it wins the hover where the two overlap.
     let hover: VRRegion | null = null;
+    let projHover: string | null = null;
     let cursorAt: THREE.Vector3 | null = null;
     for (let i = 0; i < this.controllers.length; i++) {
       const laser = this.lasers[i];
@@ -197,50 +237,61 @@ export class VRControls {
       // connection and a real pose (off the origin) before drawing/raycasting it.
       const posed = this.tmpVec.setFromMatrixPosition(controller.matrixWorld).lengthSq() > 1e-6;
       if (!this.connected[i] || !posed) { laser.visible = false; continue; }
-      const r = this.rayHit(controller);
-      // Draw a laser only when it actually meets the panel. That's the aiming feedback
-      // the user needs, and it means a controller that's set down (still a live input
-      // source at its resting pose, but not aimed at the panel) never draws a phantom line.
-      if (r.point) {
-        laser.visible = true;
-        laser.scale.z = r.distance;
-        cursorAt = r.point;              // laser is on the panel — show the dot there
-        if (r.hit) hover = r.hit.region;
-      } else {
-        laser.visible = false;
+      let r: RayResult | null = null;
+      if (this.projOpen) {
+        const rp = this.rayHitMesh(controller, this.projPanel);
+        if (rp.uv) { const g = projGridHitTest(rp.uv.x, rp.uv.y); if (g) projHover = projHitKey(g); r = rp; }
       }
+      if (!r) {
+        const rm = this.rayHitMesh(controller, this.panel);
+        if (rm.uv) { const hh = hitTest(rm.uv.x, rm.uv.y, this.layout); if (hh) hover = hh.region; r = rm; }
+      }
+      // Draw a laser only when it actually meets a panel — the aiming feedback the user
+      // needs, and no phantom line when the controller is aimed away / set down.
+      if (r && r.point) { laser.visible = true; laser.scale.z = r.distance; cursorAt = r.point; }
+      else laser.visible = false;
     }
     if (cursorAt) { this.cursor.position.copy(cursorAt); this.cursor.visible = true; }
     else this.cursor.visible = false;
-    if (hover) this.idleAt = time + IDLE_HIDE_MS; // stay up while actively aimed at
+    if (hover || projHover) this.idleAt = time + IDLE_HIDE_MS; // stay up while actively aimed at
     this.hover = hover;
+    this.projHover = projHover;
     this.paint(false);
+    if (this.projOpen) this.paintProj(false);
   }
 
-  /** Ray from a controller against the panel: the region under it (if any) and
-   *  how far the laser reaches. */
-  private rayHit(controller: THREE.Group): { hit: ReturnType<typeof hitTest>; distance: number; point: THREE.Vector3 | null } {
+  /** Ray from a controller against a panel mesh: the canvas-pixel UV under it (if any),
+   *  the laser reach, and the world hit point. */
+  private rayHitMesh(controller: THREE.Group, mesh: THREE.Mesh): RayResult {
     this.tmpMatrix.identity().extractRotation(controller.matrixWorld);
     this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.tmpMatrix);
-    const hits = this.raycaster.intersectObject(this.panel, false);
-    if (!hits.length) return { hit: null, distance: 5, point: null };
+    const hits = this.raycaster.intersectObject(mesh, false);
+    if (!hits.length) return { uv: null, distance: 5, point: null };
     const h = hits[0];
-    const hit = h.uv ? hitTest(h.uv.x * PANEL_W, (1 - h.uv.y) * PANEL_H, this.layout) : null;
-    return { hit, distance: h.distance, point: h.point };
+    const uv = h.uv ? { x: h.uv.x * PANEL_W, y: (1 - h.uv.y) * PANEL_H } : null;
+    return { uv, distance: h.distance, point: h.point };
   }
 
   private onSelect(index: number): void {
-    if (!this.visible || !this.connected[index]) return;
-    const { hit } = this.rayHit(this.controllers[index]);
-    if (!hit) return;
+    if (!this.connected[index]) return;
+    // Trigger with the panel hidden just summons it — there's nothing to aim at yet.
+    if (!this.visible) { this.show(); return; }
     this.idleAt = performanceNow() + IDLE_HIDE_MS;
+    // Popup is modal-ish: if it's open and the ray is on it, that tap is for the popup.
+    if (this.projOpen) {
+      const rp = this.rayHitMesh(this.controllers[index], this.projPanel);
+      if (rp.uv) { this.onProjSelect(rp.uv.x, rp.uv.y); return; }
+    }
+    const r = this.rayHitMesh(this.controllers[index], this.panel);
+    if (!r.uv) return;
+    const hit = hitTest(r.uv.x, r.uv.y, this.layout);
+    if (!hit) return;
     switch (hit.region) {
       case 'play': this.actions.togglePlay(); break;
       case 'exit': this.actions.exitVR(); break;
       case 'passthrough': if (this.actions.passthroughAvailable()) this.actions.togglePassthrough(); break;
-      case 'projPrev': this.actions.cycleProjection(-1); break;
-      case 'projNext': this.actions.cycleProjection(1); break;
+      case 'projection': this.projOpen ? this.closeProj() : this.openProj(); break; // globe toggles the popup
       case 'recenter': this.actions.recenter(); this.placeFrames = 12; break; // re-place the panel in the new frame
 
       case 'seek': if (hit.value !== undefined) this.actions.seekFraction(hit.value); break;
@@ -250,6 +301,43 @@ export class VRControls {
         break;
     }
     this.paint(true);
+  }
+
+  /** A tap on the projection popup: ✕ closes it; a cell edits one axis (type/layout/angle)
+   *  of the current projection and re-composes the mode (popup stays open for more edits). */
+  private onProjSelect(x: number, y: number): void {
+    const g = projGridHitTest(x, y);
+    if (!g) return;
+    if (g.region === 'close') { this.closeProj(); this.paint(true); return; }
+    const cur = decomposeProjection(this.actions.currentProjection());
+    let next: Projection;
+    if (g.axis === 'type') next = composeProjection(g.value as ProjType, cur.split, cur.angle);
+    else if (g.axis === 'split') next = composeProjection(cur.type, g.value as Split, cur.angle);
+    else next = composeProjection('fisheye', cur.split, Number(g.value) as FisheyeAngle); // angle → force fisheye
+    this.actions.setProjection(next);
+    this.paintProj(true);
+    this.paint(true); // main panel shows the current-mode label
+  }
+
+  /** Open the projection popup, floated above the main panel. */
+  private openProj(): void {
+    this.projOpen = true;
+    this.placeProj();
+    this.projPanel.visible = true;
+    this.paintProj(true);
+  }
+
+  /** Close the projection popup. */
+  private closeProj(): void {
+    this.projOpen = false;
+    this.projPanel.visible = false;
+  }
+
+  /** Position the popup just above the main panel, sharing its orientation. */
+  private placeProj(): void {
+    const up = this.tmpVec.set(0, 1, 0).applyQuaternion(this.panel.quaternion);
+    this.projPanel.quaternion.copy(this.panel.quaternion);
+    this.projPanel.position.copy(this.panel.position).addScaledVector(up, this.panelH / 2 + 0.05 + this.projPanelH / 2);
   }
 
   /** Re-summon the panel when a connected controller is deliberately moved (and
@@ -337,6 +425,7 @@ export class VRControls {
   private show(): void {
     this.place();
     this.placeFrames = 12;   // settle onto the real head pose over the next frames
+    this.projOpen = false; this.projPanel.visible = false; // always summon to the main controls
     this.visible = true;
     this.panel.visible = true;
     this.idleAt = performanceNow() + IDLE_HIDE_MS;
@@ -346,6 +435,7 @@ export class VRControls {
   private hide(): void {
     this.visible = false;
     this.panel.visible = false;
+    this.projOpen = false; this.projPanel.visible = false;
     this.cursor.visible = false;
     for (const l of this.lasers) l.visible = false;
     this.revealCooldownUntil = performanceNow() + REVEAL_COOLDOWN_MS;
@@ -365,19 +455,18 @@ export class VRControls {
     this.panel.position.y -= 0.55;                 // near the lower field of view
     this.panel.quaternion.copy(yawQuat);           // plane front (+Z) faces back toward the viewer
     this.panel.rotateX(-0.3);                      // sitting low, angle the face up toward the eyes
+    if (this.projOpen) this.placeProj();           // keep the popup pinned above the main panel
   }
 
-  /** Trim text with a trailing ellipsis to fit maxWidth. Assumes ctx.font is set. */
-  private ellipsize(text: string, maxWidth: number): string {
-    const c = this.ctx;
+  /** Trim text with a trailing ellipsis to fit maxWidth. Assumes c.font is set. */
+  private ellipsize(text: string, maxWidth: number, c: CanvasRenderingContext2D = this.ctx): string {
     if (c.measureText(text).width <= maxWidth) return text;
     let t = text;
     while (t.length > 1 && c.measureText(t + '…').width > maxWidth) t = t.slice(0, -1);
     return t.replace(/\s+$/, '') + '…';
   }
 
-  private roundRect(x: number, y: number, w: number, h: number, r: number): void {
-    const c = this.ctx;
+  private roundRect(x: number, y: number, w: number, h: number, r: number, c: CanvasRenderingContext2D = this.ctx): void {
     c.beginPath();
     c.moveTo(x + r, y);
     c.arcTo(x + w, y, x + w, y + h, r);
@@ -387,22 +476,18 @@ export class VRControls {
     c.closePath();
   }
 
-  /** Repaint the panel only when something visible changed (state or hover). */
+  /** Repaint the main panel only when something visible changed (state or hover). */
   private paint(force: boolean): void {
     const cur = this.actions.currentTime(), dur = this.actions.duration();
     const vol = this.actions.volume(), muted = this.actions.muted();
     const ptOn = this.actions.passthroughAvailable() && this.actions.passthroughEnabled();
-    const key = [this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn, this.actions.projectionLabel()].join('|');
+    const key = ['main', this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn, this.actions.currentProjection(), this.projOpen].join('|');
     if (!force && key === this.paintKey) return;
     this.paintKey = key;
 
     const c = this.ctx, L = this.layout;
     c.clearRect(0, 0, PANEL_W, PANEL_H);
-
-    // Slab
-    this.roundRect(0, 0, PANEL_W, PANEL_H, 28);
-    c.fillStyle = 'rgba(22,24,30,0.84)'; c.fill();
-    c.lineWidth = 2; c.strokeStyle = 'rgba(255,255,255,0.08)'; c.stroke();
+    this.slab();
 
     // Title, centered and truncated with an ellipsis so it never runs into the Exit button
     const title = this.actions.title();
@@ -413,9 +498,10 @@ export class VRControls {
       c.fillText(this.ellipsize(title, maxW), PANEL_W / 2, L.title.y + L.title.h / 2);
     }
 
-    // Top-row icon buttons: recenter (reticle) and exit (door-arrow) are momentary (accent on
-    // hover); passthrough (eye, slashed when off) is a toggle (accent when on, border on hover).
+    // Top-row icon buttons: recenter (reticle), projection (globe) and exit (door-arrow) are
+    // momentary; passthrough (eye, slashed when off) is a toggle (accent when on, border on hover).
     this.drawIconButton(L.recenter, this.hover === 'recenter', false, (x, y, col) => this.iconRecenter(x, y, col));
+    this.drawIconButton(L.projection, this.projOpen, this.hover === 'projection', (x, y, col) => this.iconGlobe(x, y, col));
     this.drawIconButton(L.exit, this.hover === 'exit', false, (x, y, col) => this.iconExit(x, y, col));
     if (this.actions.passthroughAvailable()) {
       const on = this.actions.passthroughEnabled();
@@ -439,30 +525,84 @@ export class VRControls {
     const volFrac = muted ? 0 : Math.max(0, Math.min(1, vol));
     this.drawBar(L.volBar, volFrac, this.hover === 'volume');
 
-    // Projection stepper (right): caption + ◀ [label] ▶
-    const cxp = L.projLabel.x + L.projLabel.w / 2;
-    c.fillStyle = MUTED_TEXT; c.font = '600 15px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'alphabetic';
-    c.fillText('PROJECTION', cxp, L.projPrev.y - 8);
-    this.drawIconButton(L.projPrev, this.hover === 'projPrev', false, (x, y, col) => this.iconArrow(x, y, -1, col));
-    this.drawIconButton(L.projNext, this.hover === 'projNext', false, (x, y, col) => this.iconArrow(x, y, 1, col));
-    c.fillStyle = TEXT; c.font = '600 26px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillText(this.ellipsize(this.actions.projectionLabel(), L.projLabel.w - 12), cxp, L.projLabel.y + L.projLabel.h / 2);
+    // Current projection name (read-only; tap the globe to change it)
+    c.fillStyle = MUTED_TEXT; c.font = '600 15px system-ui,sans-serif'; c.textAlign = 'right'; c.textBaseline = 'alphabetic';
+    c.fillText('PROJECTION', L.projLabel.x + L.projLabel.w, L.projLabel.y);
+    c.fillStyle = TEXT; c.font = '600 24px system-ui,sans-serif'; c.textBaseline = 'middle';
+    const label = PROJECTION_SHORT[this.actions.currentProjection()] ?? this.actions.currentProjection();
+    c.fillText(this.ellipsize(label, L.projLabel.w), L.projLabel.x + L.projLabel.w, L.projLabel.y + 26);
 
     // Seek + times
     const seekFrac = dur > 0 ? Math.max(0, Math.min(1, cur / dur)) : 0;
     this.drawBar(L.seekBar, seekFrac, this.hover === 'seek', true);
-    c.fillStyle = MUTED_TEXT; c.font = '22px system-ui,sans-serif'; c.textBaseline = 'alphabetic';
-    c.textAlign = 'left'; c.fillText(formatTime(cur), L.timeCur.x, L.timeCur.y);
+    c.fillStyle = MUTED_TEXT; c.font = '22px system-ui,sans-serif'; c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+    c.fillText(formatTime(cur), L.timeCur.x, L.timeCur.y);
     c.textAlign = 'right'; c.fillText(dur > 0 ? formatTime(dur) : '--:--', L.timeDur.x, L.timeDur.y);
 
     this.texture.needsUpdate = true;
   }
 
+  /** Paint the projection popup (its own canvas): a decomposed grid (Layout / Type /
+   *  Fisheye-angle) with a title and ✕ close. The current mode's axes are highlighted;
+   *  the angle row dims unless Fisheye is on. */
+  private paintProj(force: boolean): void {
+    const spec = decomposeProjection(this.actions.currentProjection());
+    const key = [spec.type, spec.split, spec.angle, this.projHover].join('|');
+    if (!force && key === this.projPaintKey) return;
+    this.projPaintKey = key;
+
+    const c = this.projCtx, L = projGridLayout();
+    c.clearRect(0, 0, PANEL_W, PANEL_H);
+    this.slab(c);
+
+    // Title (left) + ✕ close (top-right)
+    c.fillStyle = TEXT; c.font = '600 28px system-ui,"Segoe UI",Roboto,sans-serif';
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText('Projection', L.title.x, L.title.y);
+    this.drawIconButton(L.close, false, this.projHover === 'close', (x, y, col) => this.iconClose(x, y, col, c), c);
+
+    for (const g of L.groups) {
+      const angleRow = g.cells[0]?.axis === 'angle';
+      const dim = angleRow && spec.type !== 'fisheye'; // angle only applies to fisheye
+      c.globalAlpha = dim ? 0.38 : 1;
+      c.fillStyle = MUTED_TEXT; c.font = '600 15px system-ui,sans-serif';
+      c.textAlign = 'left'; c.textBaseline = 'alphabetic';
+      c.fillText(g.caption.toUpperCase(), g.cells[0].rect.x, g.captionY);
+      for (const cell of g.cells) {
+        const active =
+          cell.axis === 'type' ? cell.value === spec.type :
+          cell.axis === 'split' ? cell.value === spec.split :
+          !dim && cell.value === String(spec.angle);
+        this.drawTextButton(cell.rect, cell.label, active, this.projHover === projCellKey(cell.axis, cell.value), c);
+      }
+      c.globalAlpha = 1;
+    }
+
+    this.projTexture.needsUpdate = true;
+  }
+
+  /** The panel's rounded background slab. */
+  private slab(c: CanvasRenderingContext2D = this.ctx): void {
+    this.roundRect(0, 0, PANEL_W, PANEL_H, 28, c);
+    c.fillStyle = 'rgba(22,24,30,0.84)'; c.fill();
+    c.lineWidth = 2; c.strokeStyle = 'rgba(255,255,255,0.08)'; c.stroke();
+  }
+
+  /** A rounded pill button with a centred text label (projection-grid cells). */
+  private drawTextButton(r: Rect, label: string, active: boolean, hover: boolean, c: CanvasRenderingContext2D = this.ctx): void {
+    this.roundRect(r.x, r.y, r.w, r.h, 12, c);
+    c.fillStyle = active ? ACCENT : 'rgba(255,255,255,0.10)'; c.fill();
+    if (hover) { c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.stroke(); }
+    c.fillStyle = active ? '#fff' : TEXT;
+    c.font = '600 22px system-ui,"Segoe UI",Roboto,sans-serif';
+    c.textAlign = 'center'; c.textBaseline = 'middle';
+    c.fillText(this.ellipsize(label, r.w - 16, c), r.x + r.w / 2, r.y + r.h / 2 + 1);
+  }
+
   /** A rounded-square icon button: accent fill when `filled`, white border when `hover`; the
    *  icon is drawn centred in `filled ? white : TEXT`. */
-  private drawIconButton(r: Rect, filled: boolean, hover: boolean, draw: (cx: number, cy: number, color: string) => void): void {
-    const c = this.ctx;
-    this.roundRect(r.x, r.y, r.w, r.h, 14);
+  private drawIconButton(r: Rect, filled: boolean, hover: boolean, draw: (cx: number, cy: number, color: string) => void, c: CanvasRenderingContext2D = this.ctx): void {
+    this.roundRect(r.x, r.y, r.w, r.h, 14, c);
     c.fillStyle = filled ? ACCENT : 'rgba(255,255,255,0.12)'; c.fill();
     if (hover) { c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.stroke(); }
     draw(r.x + r.w / 2, r.y + r.h / 2, filled ? '#fff' : TEXT);
@@ -495,15 +635,14 @@ export class VRControls {
     if (off) { c.beginPath(); c.moveTo(cx - w, cy + h); c.lineTo(cx + w, cy - h); c.stroke(); }
   }
 
-  /** A solid triangle pointing left (dir −1) or right (dir +1) — the projection stepper arrows. */
-  private iconArrow(cx: number, cy: number, dir: number, color: string): void {
-    const c = this.ctx, w = 8, h = 10;
-    c.fillStyle = color;
+  /** Close — an ✕ (used on the projection popup, drawn to its own context). */
+  private iconClose(cx: number, cy: number, color: string, c: CanvasRenderingContext2D): void {
+    const s = 9;
+    c.strokeStyle = color; c.lineWidth = 2.6; c.lineCap = 'round';
     c.beginPath();
-    c.moveTo(cx + dir * w, cy);
-    c.lineTo(cx - dir * w, cy - h);
-    c.lineTo(cx - dir * w, cy + h);
-    c.closePath(); c.fill();
+    c.moveTo(cx - s, cy - s); c.lineTo(cx + s, cy + s);
+    c.moveTo(cx + s, cy - s); c.lineTo(cx - s, cy + s);
+    c.stroke();
   }
 
   /** Exit — a door frame with an arrow pointing out to the right. */
@@ -517,6 +656,19 @@ export class VRControls {
     c.beginPath();
     c.moveTo(cx - 3, cy); c.lineTo(a1, cy);
     c.moveTo(a1 - 7, cy - 6); c.lineTo(a1, cy); c.lineTo(a1 - 7, cy + 6);
+    c.stroke();
+  }
+
+  /** Projection — a globe (circle + a meridian and two parallels). */
+  private iconGlobe(cx: number, cy: number, color: string): void {
+    const c = this.ctx, r = 13;
+    c.strokeStyle = color; c.lineWidth = 2.2; c.lineCap = 'round';
+    c.beginPath(); c.arc(cx, cy, r, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.ellipse(cx, cy, r * 0.45, r, 0, 0, Math.PI * 2); c.stroke(); // meridian
+    c.beginPath();
+    c.moveTo(cx - r, cy); c.lineTo(cx + r, cy);                                   // equator
+    c.moveTo(cx - r * 0.86, cy - r * 0.5); c.lineTo(cx + r * 0.86, cy - r * 0.5); // upper parallel
+    c.moveTo(cx - r * 0.86, cy + r * 0.5); c.lineTo(cx + r * 0.86, cy + r * 0.5); // lower parallel
     c.stroke();
   }
 
@@ -557,6 +709,10 @@ export class VRControls {
     this.scene.remove(this.panel);
     this.panel.geometry.dispose();
     (this.panel.material as THREE.Material).dispose();
+    this.scene.remove(this.projPanel);
+    this.projPanel.geometry.dispose();
+    (this.projPanel.material as THREE.Material).dispose();
+    this.projTexture.dispose();
     this.scene.remove(this.cursor);
     this.cursor.geometry.dispose();
     (this.cursor.material as THREE.Material).dispose();
@@ -564,7 +720,14 @@ export class VRControls {
   }
 }
 
+/** A controller-ray hit against a panel mesh. */
+interface RayResult { uv: { x: number; y: number } | null; distance: number; point: THREE.Vector3 | null; }
+
 /** performance.now(), but tolerant of environments without it (tests). */
 function performanceNow(): number {
   return typeof performance !== 'undefined' ? performance.now() : 0;
 }
+
+/** Stable hover/identity key for a projection-grid cell. */
+function projCellKey(axis: string, value: string): string { return `${axis}:${value}`; }
+function projHitKey(g: ProjGridHit): string { return g.region === 'close' ? 'close' : projCellKey(g.axis, g.value); }

@@ -1,8 +1,11 @@
 export type Projection =
-  | '180-sbs' | '180-mono'
+  | '180-mono' | '180-sbs' | '180-tb'
   | '360-mono' | '360-sbs' | '360-tb'
-  | 'fisheye190-sbs' | 'fisheye190-mono'
-  | 'flat-2d' | 'flat-sbs-full' | 'flat-sbs-half';
+  | 'fisheye190-mono' | 'fisheye190-sbs' | 'fisheye190-tb'
+  | 'fisheye200-mono' | 'fisheye200-sbs' | 'fisheye200-tb'
+  | 'fisheye210-mono' | 'fisheye210-sbs' | 'fisheye210-tb'
+  | 'fisheye220-mono' | 'fisheye220-sbs' | 'fisheye220-tb'
+  | 'flat-2d' | 'flat-sbs-full' | 'flat-sbs-half' | 'flat-tb';
 
 export interface PlayerOptions {
   /** Initial source URL. If omitted, call `player.load(src)` later. */

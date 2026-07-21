@@ -1,6 +1,6 @@
 import * as THREE from 'three';
 import type { Projection } from '../types.js';
-import { MODES, PROJECTIONS, PROJECTION_SHORT } from './projections.js';
+import { MODES } from './projections.js';
 import { VRControls } from './VRControls.js';
 
 
@@ -142,8 +142,8 @@ export class StereoScene {
         passthroughAvailable: () => this.inPassthroughSession, // any AR session, not just alpha content
         passthroughEnabled: () => this.passthroughOn,
         togglePassthrough: () => this.setPassthrough(!this.passthroughOn),
-        projectionLabel: () => this.projectionLabel(),
-        cycleProjection: (d) => this.cycleProjection(d),
+        currentProjection: () => this.currentMode,
+        setProjection: (p) => this.requestProjection(p),
       },
     });
   }
@@ -175,7 +175,14 @@ export class StereoScene {
   private planeAspect(mode: Projection) {
     const vw = this.video.videoWidth, vh = this.video.videoHeight;
     if (!vw || !vh) return 16 / 9;
-    return MODES[mode].aspect === 'per-eye' ? (vw / 2) / vh : vw / vh;
+    const cfg = MODES[mode];
+    // 'per-eye' aspect: one eye occupies half the packed frame — SBS halves the width,
+    // TB halves the height. 'full' shows the frame at its native aspect (mono / anamorphic).
+    if (cfg.aspect === 'per-eye') {
+      if (cfg.split === 'tb') return vw / (vh / 2);
+      return (vw / 2) / vh;
+    }
+    return vw / vh;
   }
 
   private buildGeometry(mode: Projection): THREE.BufferGeometry {
@@ -193,7 +200,7 @@ export class StereoScene {
       const g = new THREE.SphereGeometry(50, 64, 32, Math.PI - phiLen / 2, phiLen, Math.PI / 2 - thetaLen / 2, thetaLen);
       g.scale(-1, 1, 1); return g;
     }
-    if (kind === 'fisheye') return this.buildFisheyeDome();
+    if (kind === 'fisheye') return this.buildFisheyeDome((MODES[mode].fisheyeAngle ?? 190) / 2);
     const h = 2.4 * f, w = h * this.planeAspect(mode);
     const g = new THREE.PlaneGeometry(w, h); g.translate(0, 0, -2); return g;
   }
@@ -387,14 +394,10 @@ export class StereoScene {
    *  state, persistence, and the DOM controls in sync. Falls back to a direct geometry swap. */
   setProjectionRequester(cb: (p: Projection) => void) { this.projectionRequester = cb; }
   private projectionRequester?: (p: Projection) => void;
-  /** Short label of the current projection, for the in-VR stepper. */
-  projectionLabel(): string { return PROJECTION_SHORT[this.currentMode] ?? this.currentMode; }
-  /** Step the projection by dir (±1) through the PROJECTIONS list (wraps around). */
-  cycleProjection(dir: number): void {
-    const list = PROJECTIONS.map((p) => p.value);
-    const i = Math.max(0, list.indexOf(this.currentMode));
-    const next = list[(i + dir + list.length) % list.length];
-    (this.projectionRequester ?? ((p: Projection) => this.setProjection(p)))(next);
+  /** Change projection, routing through the requester (Player) when set so its state,
+   *  persistence, and the DOM controls stay in sync; else swap geometry directly. */
+  private requestProjection(p: Projection): void {
+    (this.projectionRequester ?? ((x: Projection) => this.setProjection(x)))(p);
   }
   setSwapEyes(v: boolean) { this.applyProjection(this.currentMode, v); }
   setFov(deg: number) { this.camera.fov = deg; this.camera.updateProjectionMatrix(); }
