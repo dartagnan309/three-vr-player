@@ -34,6 +34,8 @@ export class StereoScene {
   // Uniforms shared with the alpha-fisheye shader; uPtShift/uTexel updated each eye in updateStereoUV.
   private alphaUniforms?: { uPtShift: { value: number }; uTexel: { value: THREE.Vector2 }; uAlphaEnabled: { value: number } };
   private vrControls?: VRControls;
+  private disposed = false;
+  private offerCleanup?: () => void;   // removes the offerVR re-offer listener on dispose
   private readonly animate = (time?: number) => {
     for (const cb of this.frameCbs) cb();
     this.vrControls?.update(time ?? 0);
@@ -428,14 +430,23 @@ export class StereoScene {
     if (!this.video.paused) this.video.pause(); // pause first if playing, then leave VR
     void this.renderer.xr.getSession()?.end();
   }
-  /** Arm the browser/headset's own "Enter VR" affordance (e.g. the Quest system button). */
+  /** Arm the browser/headset's own "Enter VR" affordance (e.g. the Quest system button).
+   *  The offer is re-armed on every session end so the affordance keeps working; dispose()
+   *  stops it so a torn-down player can't be pulled back into a session. */
   offerVR(): void {
     const offer = (navigator.xr as { offerSession?: (m: XRSessionMode, i: XRSessionInit) => Promise<XRSession> } | undefined)?.offerSession;
-    if (!offer) return;
+    if (!offer || this.disposed) return;
     const run = () => offer.call(navigator.xr, 'immersive-vr', this.vrSessionInit)
-      .then((s) => this.renderer.xr.setSession(s))
+      .then((s) => {
+        // The player may have been disposed while the offer was pending — decline the
+        // granted session instead of attaching it to a dead renderer.
+        if (this.disposed) { void s.end(); return; }
+        void this.renderer.xr.setSession(s);
+      })
       .catch(() => { /* the UA declined the offer or the user dismissed it */ });
-    this.renderer.xr.addEventListener('sessionend', () => void run());
+    const onEnd = () => { if (!this.disposed) void run(); };
+    this.renderer.xr.addEventListener('sessionend', onEnd);
+    this.offerCleanup = () => this.renderer.xr.removeEventListener('sessionend', onEnd);
     void run();
   }
 
@@ -448,6 +459,8 @@ export class StereoScene {
   };
 
   dispose() {
+    this.disposed = true;          // stops any pending offerVR re-offer from re-entering
+    this.offerCleanup?.();
     this.ro.disconnect();
     this.renderer.setAnimationLoop(null);
     this.vrControls?.dispose();
