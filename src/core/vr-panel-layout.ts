@@ -32,9 +32,10 @@ export function panelLayout(): PanelLayout {
   const W = PANEL_W, H = PANEL_H, pad = 48;
   return {
     width: W, height: H,
-    recenter: { x: 30, y: 26, w: 160, h: 52 },
-    passthrough: { x: 206, y: 26, w: 220, h: 52 }, // toggle; shown only for alpha (passthrough) content
-    exit:    { x: W - 190, y: 26, w: 160, h: 52 },
+    // Top-row icon buttons (reticle / eye / door-arrow). Compact so they read as icons, not labels.
+    recenter:    { x: 30, y: 26, w: 64, h: 52 },
+    passthrough: { x: 108, y: 26, w: 64, h: 52 }, // toggle; shown only for alpha (passthrough) content
+    exit:        { x: W - 94, y: 26, w: 64, h: 52 },
     title:   { x: 0, y: 92, w: W, h: 44 },
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },
     volIcon: { x: pad, y: 178, w: 44, h: 44 },

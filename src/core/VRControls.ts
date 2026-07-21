@@ -402,18 +402,13 @@ export class VRControls {
       c.fillText(this.ellipsize(title, maxW), PANEL_W / 2, L.title.y + L.title.h / 2);
     }
 
-    // Top pills
-    this.drawPill(L.recenter, 'Recenter', this.hover === 'recenter');
-    this.drawPill(L.exit, 'Exit VR', this.hover === 'exit');
-    // Passthrough toggle (alpha content only): filled/accent when ON, white border on hover.
+    // Top-row icon buttons: recenter (reticle) and exit (door-arrow) are momentary (accent on
+    // hover); passthrough (eye, slashed when off) is a toggle (accent when on, border on hover).
+    this.drawIconButton(L.recenter, this.hover === 'recenter', false, (x, y, col) => this.iconRecenter(x, y, col));
+    this.drawIconButton(L.exit, this.hover === 'exit', false, (x, y, col) => this.iconExit(x, y, col));
     if (this.actions.passthroughAvailable()) {
-      const r = L.passthrough, on = this.actions.passthroughEnabled();
-      this.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
-      c.fillStyle = on ? ACCENT : 'rgba(255,255,255,0.12)'; c.fill();
-      if (this.hover === 'passthrough') { c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.stroke(); }
-      c.fillStyle = on ? '#fff' : TEXT;
-      c.font = '600 24px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-      c.fillText('Passthrough', r.x + r.w / 2, r.y + r.h / 2);
+      const on = this.actions.passthroughEnabled();
+      this.drawIconButton(L.passthrough, on, this.hover === 'passthrough', (x, y, col) => this.iconEye(x, y, !on, col));
     }
 
     // Play / pause
@@ -443,13 +438,55 @@ export class VRControls {
     this.texture.needsUpdate = true;
   }
 
-  private drawPill(r: Rect, label: string, active: boolean): void {
+  /** A rounded-square icon button: accent fill when `filled`, white border when `hover`; the
+   *  icon is drawn centred in `filled ? white : TEXT`. */
+  private drawIconButton(r: Rect, filled: boolean, hover: boolean, draw: (cx: number, cy: number, color: string) => void): void {
     const c = this.ctx;
-    this.roundRect(r.x, r.y, r.w, r.h, r.h / 2);
-    c.fillStyle = active ? ACCENT : 'rgba(255,255,255,0.12)'; c.fill();
-    c.fillStyle = active ? '#fff' : TEXT;
-    c.font = '600 24px system-ui,sans-serif'; c.textAlign = 'center'; c.textBaseline = 'middle';
-    c.fillText(label, r.x + r.w / 2, r.y + r.h / 2);
+    this.roundRect(r.x, r.y, r.w, r.h, 14);
+    c.fillStyle = filled ? ACCENT : 'rgba(255,255,255,0.12)'; c.fill();
+    if (hover) { c.lineWidth = 3; c.strokeStyle = 'rgba(255,255,255,0.9)'; c.stroke(); }
+    draw(r.x + r.w / 2, r.y + r.h / 2, filled ? '#fff' : TEXT);
+  }
+
+  /** Recenter — a reticle (ring + centre dot + crosshair ticks). */
+  private iconRecenter(cx: number, cy: number, color: string): void {
+    const c = this.ctx;
+    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 2.5; c.lineCap = 'round';
+    c.beginPath(); c.arc(cx, cy, 9, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(cx, cy, 2.4, 0, Math.PI * 2); c.fill();
+    c.beginPath();
+    c.moveTo(cx, cy - 16); c.lineTo(cx, cy - 6);
+    c.moveTo(cx, cy + 6); c.lineTo(cx, cy + 16);
+    c.moveTo(cx - 16, cy); c.lineTo(cx - 6, cy);
+    c.moveTo(cx + 6, cy); c.lineTo(cx + 16, cy);
+    c.stroke();
+  }
+
+  /** Passthrough — an eye; a diagonal slash across it means passthrough is off. */
+  private iconEye(cx: number, cy: number, off: boolean, color: string): void {
+    const c = this.ctx, w = 16, h = 10;
+    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 2.5; c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(cx - w, cy);
+    c.quadraticCurveTo(cx, cy - h * 1.7, cx + w, cy);
+    c.quadraticCurveTo(cx, cy + h * 1.7, cx - w, cy);
+    c.stroke();
+    c.beginPath(); c.arc(cx, cy, 4, 0, Math.PI * 2); c.fill();
+    if (off) { c.beginPath(); c.moveTo(cx - w, cy + h); c.lineTo(cx + w, cy - h); c.stroke(); }
+  }
+
+  /** Exit — a door frame with an arrow pointing out to the right. */
+  private iconExit(cx: number, cy: number, color: string): void {
+    const c = this.ctx, dx = cx - 15, dw = 11, dh = 22, a1 = cx + 16;
+    c.strokeStyle = color; c.lineWidth = 2.5; c.lineCap = 'round'; c.lineJoin = 'round';
+    c.beginPath();
+    c.moveTo(dx + dw, cy - dh / 2); c.lineTo(dx, cy - dh / 2);
+    c.lineTo(dx, cy + dh / 2); c.lineTo(dx + dw, cy + dh / 2);
+    c.stroke();
+    c.beginPath();
+    c.moveTo(cx - 3, cy); c.lineTo(a1, cy);
+    c.moveTo(a1 - 7, cy - 6); c.lineTo(a1, cy); c.lineTo(a1 - 7, cy + 6);
+    c.stroke();
   }
 
   private drawBar(r: { x: number; y: number; w: number; h: number }, frac: number, hovered: boolean, knob = false): void {
