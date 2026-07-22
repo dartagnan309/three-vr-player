@@ -115,4 +115,21 @@ describe('settings popup hitTest', () => {
   it('exposes the five expected settings in order', () => {
     expect(S.rows.map((r) => r.key)).toEqual(['zoom', 'pitch', 'yaw', 'height', 'roll']);
   });
+
+  it('reads a fraction from a slider track (tap/drag to position)', () => {
+    const row = S.rows[1]; // pitch
+    const y = row.bar.y + row.bar.h / 2;
+    expect(settingsHitTest(row.bar.x, y)).toMatchObject({ region: 'set', key: 'pitch', value: 0 });
+    const mid = settingsHitTest(row.bar.x + row.bar.w / 2, y);
+    expect(mid).toMatchObject({ region: 'set', key: 'pitch' });
+    expect((mid as { value: number }).value).toBeCloseTo(0.5, 2);
+    expect(settingsHitTest(row.bar.x + row.bar.w, y)).toMatchObject({ region: 'set', value: 1 });
+  });
+
+  it('clamps the slider fraction to 0..1 within the padded track', () => {
+    const row = S.rows[0];
+    const y = row.bar.y + row.bar.h / 2;
+    expect((settingsHitTest(row.bar.x - 8, y) as { value: number }).value).toBe(0);
+    expect((settingsHitTest(row.bar.x + row.bar.w + 8, y) as { value: number }).value).toBe(1);
+  });
 });

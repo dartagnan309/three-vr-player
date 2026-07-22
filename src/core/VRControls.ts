@@ -40,6 +40,7 @@ export interface VRControlsActions {
   /** View settings popup: current value+range of a setting, nudge it, and reset all. */
   viewParam(key: SettingsKey): { value: number; min: number; max: number };
   stepView(key: SettingsKey, dir: number): void;
+  setView(key: SettingsKey, value: number): void;
   resetView(): void;
 }
 
@@ -59,6 +60,9 @@ const STICK_DEADZONE = 0.15;
 const ZOOM_RATE = 0.012;            // content fov (stick X)
 const TILT_RATE = 0.012;            // radians/frame at full deflection (stick Y)
 const GRAB_TAP_ANGLE = 0.08;        // radians: a grip turned less than this is a tap (toggle), not a grab
+// The settings popup wraps inward: it's yawed about its inner edge so its outer edge swings
+// toward the viewer (curved-cockpit feel), rather than lying flat beside the main bar.
+const SETTINGS_YAW = 0.5;           // radians (~29°)
 
 /** A world-locked control panel for immersive VR, drawn to a canvas texture and
  *  driven by the motion controllers' laser + trigger. Lives only while an XR
@@ -119,6 +123,8 @@ export class VRControls {
   private setPaintKey = '';
   private idleAt = 0;
   private togglePrev = false;
+  // Settings slider being dragged: which controller holds the trigger, and on which row.
+  private settingsDrag: { index: number; key: SettingsKey } | null = null;
   private placeFrames = 0;               // re-lock the panel to the head pose for a few frames after summon
 
   constructor(opts: { renderer: THREE.WebGLRenderer; scene: THREE.Scene; actions: VRControlsActions }) {
@@ -207,6 +213,7 @@ export class VRControls {
       this.connected.push(i < trackedCount);
 
       const select = () => this.onSelect(i);
+      const selectEnd = () => this.onSelectEnd(i); // trigger up: end a slider drag
       const grabStart = () => this.onGrabStart(i); // grip down: begin grab-rotate
       const grabEnd = () => this.onGrabEnd(i);     // grip up: end grab, or toggle panel if it was a tap
       const connect = (e?: { data?: { targetRayMode?: string } }) => { this.connected[i] = !e?.data || e.data.targetRayMode === 'tracked-pointer'; };
@@ -216,12 +223,14 @@ export class VRControls {
         removeEventListener(t: string, l: (e?: { data?: { targetRayMode?: string } }) => void): void;
       };
       ev.addEventListener('selectstart', select);
+      ev.addEventListener('selectend', selectEnd);
       ev.addEventListener('squeezestart', grabStart);
       ev.addEventListener('squeezeend', grabEnd);
       ev.addEventListener('connected', connect);
       ev.addEventListener('disconnected', disconnect);
       this.cleanups.push(() => {
         ev.removeEventListener('selectstart', select);
+        ev.removeEventListener('selectend', selectEnd);
         ev.removeEventListener('squeezestart', grabStart);
         ev.removeEventListener('squeezeend', grabEnd);
         ev.removeEventListener('connected', connect);
@@ -258,6 +267,9 @@ export class VRControls {
 
     // Auto-hide after a spell of no aiming at the panel.
     if (this.idleAt && time > this.idleAt) { this.hide(); return; }
+
+    // A held slider drag tracks the ray along the bar every frame until the trigger releases.
+    if (this.settingsDrag) { this.updateSettingsDrag(time); }
 
     // Raycast both controllers against the open popups first, then the main panel —
     // the popups float on top, so they win the hover where they overlap.
@@ -319,20 +331,21 @@ export class VRControls {
     if (!this.connected[index]) return;
     // Trigger with the panel hidden just summons it — there's nothing to aim at yet.
     if (!this.visible) { this.show(); return; }
-    this.idleAt = performanceNow() + IDLE_HIDE_MS;
     // Popups are modal-ish: if one is open and the ray is on it, that tap is for the popup.
     if (this.projOpen) {
       const rp = this.rayHitMesh(this.controllers[index], this.projPanel, PANEL_W, PANEL_H);
-      if (rp.uv) { this.onProjSelect(rp.uv.x, rp.uv.y); return; }
+      if (rp.uv) { this.idleAt = performanceNow() + IDLE_HIDE_MS; this.onProjSelect(rp.uv.x, rp.uv.y); return; }
     }
     if (this.settingsOpen) {
       const rs = this.rayHitMesh(this.controllers[index], this.setPanel, SETTINGS_W, SETTINGS_H);
-      if (rs.uv) { this.onSettingsSelect(rs.uv.x, rs.uv.y); return; }
+      if (rs.uv) { this.idleAt = performanceNow() + IDLE_HIDE_MS; this.onSettingsSelect(rs.uv.x, rs.uv.y, index); return; }
     }
     const r = this.rayHitMesh(this.controllers[index], this.panel, PANEL_W, PANEL_H);
-    if (!r.uv) return;
-    const hit = hitTest(r.uv.x, r.uv.y, this.layout);
-    if (!hit) return;
+    const hit = r.uv ? hitTest(r.uv.x, r.uv.y, this.layout) : null;
+    // A trigger that lands on no control (empty panel space or a total miss) toggles the
+    // panel away — so a click dismisses the UI unless it's aimed at a button/bar.
+    if (!hit) { this.hide(); return; }
+    this.idleAt = performanceNow() + IDLE_HIDE_MS;
     switch (hit.region) {
       case 'play': this.actions.togglePlay(); break;
       case 'exit': this.actions.exitVR(); break;
@@ -405,14 +418,42 @@ export class VRControls {
     this.projPanel.position.copy(this.panel.position).addScaledVector(up, this.panelH / 2 + 0.05 + this.projPanelH / 2);
   }
 
-  /** A tap on the settings popup: ✕ closes it, reset restores defaults, ∓ nudges a setting. */
-  private onSettingsSelect(x: number, y: number): void {
+  /** A tap on the settings popup: ✕ closes it, reset restores defaults, ∓ nudges a setting,
+   *  and a tap on a slider track jumps it to that position (and begins a drag if `index` is a
+   *  real controller — held-trigger tracking continues in updateSettingsDrag). */
+  private onSettingsSelect(x: number, y: number, index = -1): void {
     const s = settingsHitTest(x, y);
     if (!s) return;
     if (s.region === 'close') { this.closeSettings(); this.paint(true); return; }
-    if (s.region === 'reset') this.actions.resetView();
-    else this.actions.stepView(s.key, s.dir);
+    else if (s.region === 'reset') this.actions.resetView();
+    else if (s.region === 'set') {
+      if (index >= 0) this.settingsDrag = { index, key: s.key };
+      this.applySettingFraction(s.key, s.value);
+    } else this.actions.stepView(s.key, s.dir);
     this.paintSettings(true);
+  }
+
+  /** Set a slider's value from a 0..1 fraction along its track, mapped into its range. */
+  private applySettingFraction(key: SettingsKey, frac: number): void {
+    const p = this.actions.viewParam(key);
+    this.actions.setView(key, p.min + frac * (p.max - p.min));
+  }
+
+  /** While the trigger is held after grabbing a slider, follow the ray along that bar (free
+   *  of the exact y, so vertical wander doesn't break the drag) and update the value. */
+  private updateSettingsDrag(time: number): void {
+    const d = this.settingsDrag!;
+    if (!this.settingsOpen || !this.connected[d.index]) { this.settingsDrag = null; return; }
+    const rs = this.rayHitMesh(this.controllers[d.index], this.setPanel, SETTINGS_W, SETTINGS_H);
+    if (!rs.uv) return; // ray briefly off the panel — hold the current value, keep the drag alive
+    const row = settingsLayout().rows.find((r) => r.key === d.key)!;
+    this.applySettingFraction(d.key, Math.max(0, Math.min(1, (rs.uv.x - row.bar.x) / row.bar.w)));
+    this.idleAt = time + IDLE_HIDE_MS;
+    this.paintSettings(true);
+  }
+
+  private onSelectEnd(i: number): void {
+    if (this.settingsDrag?.index === i) this.settingsDrag = null;
   }
 
   /** Open the settings popup, floated to the right of the main panel. */
@@ -429,11 +470,19 @@ export class VRControls {
     this.setPanel.visible = false;
   }
 
-  /** Position the settings popup just right of the main panel, sharing its orientation. */
+  /** Position the settings popup to the right of the main panel, yawed inward about its
+   *  inner (left) edge so its outer edge swings toward the viewer — it wraps around rather
+   *  than lying flat beside the bar, keeping it closer and squarer to the eyes. */
   private placeSettings(): void {
     const right = this.tmpVec.set(1, 0, 0).applyQuaternion(this.panel.quaternion);
+    // The inner edge stays pinned just past the main panel's right edge (small gap).
+    const innerEdge = this.panel.position.clone().addScaledVector(right, this.panelW / 2 + 0.05);
     this.setPanel.quaternion.copy(this.panel.quaternion);
-    this.setPanel.position.copy(this.panel.position).addScaledVector(right, this.panelW / 2 + 0.05 + this.setPanelW / 2);
+    this.setPanel.rotateY(-SETTINGS_YAW);   // swing the far edge toward the viewer
+    // Place the centre half a (rotated) panel-width out from the pinned inner edge.
+    // (`right`/tmpVec is done being read above, so reuse it for the rotated axis.)
+    const outX = this.tmpVec.set(1, 0, 0).applyQuaternion(this.setPanel.quaternion);
+    this.setPanel.position.copy(innerEdge).addScaledVector(outX, this.setPanelW / 2);
   }
 
   /** Re-summon the panel when a connected controller is deliberately moved (and
@@ -539,6 +588,7 @@ export class VRControls {
     this.panel.visible = false;
     this.projOpen = false; this.projPanel.visible = false;
     this.settingsOpen = false; this.setPanel.visible = false;
+    this.settingsDrag = null;
     this.cursor.visible = false;
     for (const l of this.lasers) l.visible = false;
     this.revealCooldownUntil = performanceNow() + REVEAL_COOLDOWN_MS;
@@ -712,7 +762,7 @@ export class VRControls {
       // − / + steppers and the fill bar between them
       this.drawIconButton(row.minus, false, this.setHover === `${row.key}:-1`, (x, y, col) => this.iconPlusMinus(x, y, false, col, c), c);
       this.drawIconButton(row.plus, false, this.setHover === `${row.key}:1`, (x, y, col) => this.iconPlusMinus(x, y, true, col, c), c);
-      this.drawBar(row.bar, frac, false, true, c);
+      this.drawBar(row.bar, frac, this.setHover === `${row.key}:set`, true, c);
     });
 
     this.drawTextButton(L.reset, 'Reset to default', false, this.setHover === 'reset', c);
@@ -904,4 +954,8 @@ function performanceNow(): number {
 function projCellKey(axis: string, value: string): string { return `${axis}:${value}`; }
 function projHitKey(g: ProjGridHit): string { return g.region === 'close' ? 'close' : projCellKey(g.axis, g.value); }
 /** Stable hover/identity key for a settings popup hit. */
-function settingsHitKey(s: SettingsHit): string { return s.region === 'step' ? `${s.key}:${s.dir}` : s.region; }
+function settingsHitKey(s: SettingsHit): string {
+  if (s.region === 'step') return `${s.key}:${s.dir}`;
+  if (s.region === 'set') return `${s.key}:set`;
+  return s.region;
+}

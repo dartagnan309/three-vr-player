@@ -206,15 +206,20 @@ export function settingsLayout(): SettingsLayout {
 export type SettingsHit =
   | { region: 'close' }
   | { region: 'reset' }
-  | { region: 'step'; key: SettingsKey; dir: -1 | 1 };
+  | { region: 'step'; key: SettingsKey; dir: -1 | 1 }
+  /** A tap/drag on a slider track: `value` is the 0..1 fraction along it. */
+  | { region: 'set'; key: SettingsKey; value: number };
 
-/** Map a canvas-pixel point on the settings popup to a stepper / reset / close. */
+/** Map a canvas-pixel point on the settings popup to a stepper / slider / reset / close.
+ *  The bar gets generous vertical padding so aiming with a jittery ray is forgiving. */
 export function settingsHitTest(x: number, y: number, layout: SettingsLayout = settingsLayout()): SettingsHit | null {
+  const BAR_PAD = 22;
   if (inRect(layout.close, x, y)) return { region: 'close' };
   if (inRect(layout.reset, x, y)) return { region: 'reset' };
   for (const row of layout.rows) {
     if (inRect(row.minus, x, y)) return { region: 'step', key: row.key, dir: -1 };
     if (inRect(row.plus, x, y)) return { region: 'step', key: row.key, dir: 1 };
+    if (inRect(row.bar, x, y, 12, BAR_PAD)) return { region: 'set', key: row.key, value: clamp01((x - row.bar.x) / row.bar.w) };
   }
   return null;
 }
