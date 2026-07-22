@@ -52,13 +52,13 @@ export class StereoScene {
   private readonly ro: ResizeObserver;
   private currentMode: Projection;
   private currentSwap: boolean;
-  // local-floor as OPTIONAL (widest device support — don't hard-fail headsets without it).
-  // Deliberately NOT requesting 'layers': it flips three.js to an XRProjectionLayer depth
-  // path that flickers on the Quest.
-  private readonly vrSessionInit: XRSessionInit = { optionalFeatures: ['local-floor'] };
-  // immersive-ar for passthrough. local-floor optional (widest support); the UA turns on
-  // camera passthrough (alpha-blend / additive blend mode) for the session automatically.
-  private readonly arSessionInit: XRSessionInit = { optionalFeatures: ['local-floor'] };
+  // We use a 'local' (eye-level) reference space — set on the renderer below — so content
+  // centres on the horizon instead of sitting at floor height. Deliberately NOT requesting
+  // 'layers': it flips three.js to an XRProjectionLayer depth path that flickers on the Quest.
+  private readonly vrSessionInit: XRSessionInit = {};
+  // immersive-ar for passthrough: the UA turns on camera passthrough (alpha-blend / additive
+  // blend mode) for the session automatically; no extra session features are needed.
+  private readonly arSessionInit: XRSessionInit = {};
 
   constructor(opts: {
     canvas: HTMLCanvasElement; video: HTMLVideoElement;
@@ -77,6 +77,9 @@ export class StereoScene {
     this.renderer.setPixelRatio(this.pixelRatioFor(supersampling));
     this.renderer.setSize(this.w(), this.h(), false);
     this.renderer.xr.enabled = true;
+    // Eye-level origin: the default 'local-floor' space puts the origin on the floor, so a flat
+    // screen at y=0 renders ~1.6 m below the viewer. 'local' centres content on the horizon.
+    this.renderer.xr.setReferenceSpaceType('local');
 
     this.camera = new THREE.PerspectiveCamera(fov, this.w() / this.h(), 0.1, 1000);
     this.camera.position.set(0, 0, 0);
