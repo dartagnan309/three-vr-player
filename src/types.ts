@@ -32,6 +32,12 @@ export interface PlayerOptions {
   shadowDom?: boolean;
   /** Show the Enter-VR button when a headset is available. Default `true`. */
   vrButton?: boolean;
+  /**
+   * Arm the headset's own "Enter VR" affordance via `navigator.xr.offerSession`, re-offered
+   * on each session end so it keeps working. Independent of `vrButton`. Default `true`;
+   * set `false` to never call `offerSession`.
+   */
+  offerSession?: boolean;
   /** Title shown on the in-VR control panel. Optional. */
   title?: string;
   /**

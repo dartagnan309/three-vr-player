@@ -81,6 +81,7 @@ new Player(container, {
   persistSettings?: boolean;    // default false (localStorage)
   shadowDom?: boolean;          // default true (style isolation)
   vrButton?: boolean;           // default true (shown only when a headset is present)
+  offerSession?: boolean;       // default true — arm the headset's own Enter-VR affordance (offerSession)
   nativeFallback?: boolean;     // default true — plain 2D <video> fallback on CORS-taint
 });
 ```

@@ -112,8 +112,11 @@ export class Player {
     this.video.addEventListener('loadedmetadata', () => { if (!this.readyEmitted) { this.readyEmitted = true; this.emit('ready'); } });
     this.scene.renderer.xr.addEventListener('sessionstart', () => this.emit('enterxr'));
     this.scene.renderer.xr.addEventListener('sessionend', () => this.emit('exitxr'));
-    // Arm the headset/browser's own "Enter VR" affordance when immersive VR is available.
-    void this.vrSupported().then((ok) => { if (ok) this.scene.offerVR(); });
+    // Arm the headset/browser's own "Enter VR" affordance when immersive VR is available,
+    // unless disabled via the `offerSession` option (independent of the VR button).
+    if (options.offerSession !== false && navigator.xr) {
+      void navigator.xr.isSessionSupported('immersive-vr').then((ok) => { if (ok) this.scene.offerVR(); }).catch(() => { /* unsupported */ });
+    }
 
     if (options.src) void this.load(options.src, { projection: options.projection });
   }
