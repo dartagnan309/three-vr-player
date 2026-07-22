@@ -105,13 +105,6 @@ describe('settings popup hitTest', () => {
     expect(settingsHitTest(midR(S.reset).x, midR(S.reset).y)).toEqual({ region: 'reset' });
   });
 
-  it('hits each row stepper (− and +)', () => {
-    for (const row of S.rows) {
-      expect(settingsHitTest(midR(row.minus).x, midR(row.minus).y)).toEqual({ region: 'step', key: row.key, dir: -1 });
-      expect(settingsHitTest(midR(row.plus).x, midR(row.plus).y)).toEqual({ region: 'step', key: row.key, dir: 1 });
-    }
-  });
-
   it('exposes the five expected settings in order', () => {
     expect(S.rows.map((r) => r.key)).toEqual(['zoom', 'pitch', 'yaw', 'height', 'roll']);
   });

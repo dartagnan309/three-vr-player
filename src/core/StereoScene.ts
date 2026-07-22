@@ -154,7 +154,6 @@ export class StereoScene {
         currentProjection: () => this.currentMode,
         setProjection: (p) => this.requestProjection(p),
         viewParam: (k) => this.viewParam(k),
-        stepView: (k, d) => this.stepView(k, d),
         setView: (k, v) => this.setView(k, v),
         resetView: () => this.resetView(),
       },
@@ -442,11 +441,6 @@ export class StereoScene {
   viewParam(key: SettingsKey): { value: number; min: number; max: number } {
     const r = StereoScene.VIEW_RANGES[key];
     return { value: this.viewValue(key), min: r.min, max: r.max };
-  }
-  /** Nudge a view setting by ±one step, clamped to its range. */
-  stepView(key: SettingsKey, dir: number): void {
-    const r = StereoScene.VIEW_RANGES[key];
-    this.applyView(key, Math.max(r.min, Math.min(r.max, this.viewValue(key) + Math.sign(dir) * r.step)));
   }
   /** Set a view setting to an absolute value (clamped) — for slider tap/drag. */
   setView(key: SettingsKey, value: number): void {

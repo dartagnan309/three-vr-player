@@ -39,7 +39,6 @@ export interface VRControlsActions {
   setProjection(p: Projection): void;
   /** View settings popup: current value+range of a setting, nudge it, and reset all. */
   viewParam(key: SettingsKey): { value: number; min: number; max: number };
-  stepView(key: SettingsKey, dir: number): void;
   setView(key: SettingsKey, value: number): void;
   resetView(): void;
 }
@@ -426,10 +425,10 @@ export class VRControls {
     if (!s) return;
     if (s.region === 'close') { this.closeSettings(); this.paint(true); return; }
     else if (s.region === 'reset') this.actions.resetView();
-    else if (s.region === 'set') {
+    else { // 'set' — a tap/drag on a slider track
       if (index >= 0) this.settingsDrag = { index, key: s.key };
       this.applySettingFraction(s.key, s.value);
-    } else this.actions.stepView(s.key, s.dir);
+    }
     this.paintSettings(true);
   }
 
@@ -755,13 +754,10 @@ export class VRControls {
     L.rows.forEach((row, i) => {
       const { value, min, max } = params[i];
       const frac = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
-      // caption (left) + value (right), above the bar
+      // caption (left) + value (right), above the full-width slider
       c.font = '600 18px system-ui,sans-serif'; c.textBaseline = 'alphabetic';
-      c.fillStyle = MUTED_TEXT; c.textAlign = 'left'; c.fillText(row.caption, row.minus.x, row.captionY);
-      c.fillStyle = TEXT; c.textAlign = 'right'; c.fillText(this.fmtSetting(row.key, value), row.plus.x + row.plus.w, row.captionY);
-      // − / + steppers and the fill bar between them
-      this.drawIconButton(row.minus, false, this.setHover === `${row.key}:-1`, (x, y, col) => this.iconPlusMinus(x, y, false, col, c), c);
-      this.drawIconButton(row.plus, false, this.setHover === `${row.key}:1`, (x, y, col) => this.iconPlusMinus(x, y, true, col, c), c);
+      c.fillStyle = MUTED_TEXT; c.textAlign = 'left'; c.fillText(row.caption, row.bar.x, row.captionY);
+      c.fillStyle = TEXT; c.textAlign = 'right'; c.fillText(this.fmtSetting(row.key, value), row.bar.x + row.bar.w, row.captionY);
       this.drawBar(row.bar, frac, this.setHover === `${row.key}:set`, true, c);
     });
 
@@ -867,16 +863,6 @@ export class VRControls {
     c.beginPath(); c.arc(cx, cy, 3, 0, Math.PI * 2); c.fill();
   }
 
-  /** A − or + glyph for the settings steppers (drawn to the given context). */
-  private iconPlusMinus(cx: number, cy: number, plus: boolean, color: string, c: CanvasRenderingContext2D): void {
-    const s = 10;
-    c.strokeStyle = color; c.lineWidth = 3; c.lineCap = 'round';
-    c.beginPath();
-    c.moveTo(cx - s, cy); c.lineTo(cx + s, cy);
-    if (plus) { c.moveTo(cx, cy - s); c.lineTo(cx, cy + s); }
-    c.stroke();
-  }
-
   /** Projection — a globe (circle + a meridian and two parallels). */
   private iconGlobe(cx: number, cy: number, color: string): void {
     const c = this.ctx, r = 13;
@@ -955,7 +941,6 @@ function projCellKey(axis: string, value: string): string { return `${axis}:${va
 function projHitKey(g: ProjGridHit): string { return g.region === 'close' ? 'close' : projCellKey(g.axis, g.value); }
 /** Stable hover/identity key for a settings popup hit. */
 function settingsHitKey(s: SettingsHit): string {
-  if (s.region === 'step') return `${s.key}:${s.dir}`;
   if (s.region === 'set') return `${s.key}:set`;
   return s.region;
 }

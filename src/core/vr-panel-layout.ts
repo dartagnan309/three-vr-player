@@ -166,7 +166,7 @@ export type SettingsKey = 'zoom' | 'pitch' | 'yaw' | 'height' | 'roll';
 
 export interface SettingsRow {
   key: SettingsKey; caption: string; captionY: number;
-  minus: Rect; plus: Rect; bar: Rect;
+  bar: Rect;
 }
 export interface SettingsLayout {
   width: number; height: number;
@@ -189,10 +189,9 @@ export function settingsLayout(): SettingsLayout {
   const W = SETTINGS_W, pad = 32;
   const rows: SettingsRow[] = SETTINGS_ROWS.map(({ key, caption }, i) => {
     const ry = 104 + i * 100;                 // caption baseline
-    const minus: Rect = { x: pad, y: ry + 16, w: 56, h: 52 };
-    const plus: Rect = { x: W - pad - 56, y: ry + 16, w: 56, h: 52 };
-    const bar: Rect = { x: minus.x + minus.w + 16, y: ry + 31, w: plus.x - 16 - (minus.x + minus.w + 16), h: 22 };
-    return { key, caption, captionY: ry, minus, plus, bar };
+    // Full-width slider track (the ∓ steppers are gone — tap/drag the bar instead).
+    const bar: Rect = { x: pad, y: ry + 31, w: W - pad * 2, h: 22 };
+    return { key, caption, captionY: ry, bar };
   });
   return {
     width: W, height: SETTINGS_H,
@@ -206,19 +205,16 @@ export function settingsLayout(): SettingsLayout {
 export type SettingsHit =
   | { region: 'close' }
   | { region: 'reset' }
-  | { region: 'step'; key: SettingsKey; dir: -1 | 1 }
   /** A tap/drag on a slider track: `value` is the 0..1 fraction along it. */
   | { region: 'set'; key: SettingsKey; value: number };
 
-/** Map a canvas-pixel point on the settings popup to a stepper / slider / reset / close.
+/** Map a canvas-pixel point on the settings popup to a slider / reset / close.
  *  The bar gets generous vertical padding so aiming with a jittery ray is forgiving. */
 export function settingsHitTest(x: number, y: number, layout: SettingsLayout = settingsLayout()): SettingsHit | null {
   const BAR_PAD = 22;
   if (inRect(layout.close, x, y)) return { region: 'close' };
   if (inRect(layout.reset, x, y)) return { region: 'reset' };
   for (const row of layout.rows) {
-    if (inRect(row.minus, x, y)) return { region: 'step', key: row.key, dir: -1 };
-    if (inRect(row.plus, x, y)) return { region: 'step', key: row.key, dir: 1 };
     if (inRect(row.bar, x, y, 12, BAR_PAD)) return { region: 'set', key: row.key, value: clamp01((x - row.bar.x) / row.bar.w) };
   }
   return null;
