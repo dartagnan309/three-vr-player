@@ -36,6 +36,7 @@ export class StereoScene {
   private vrControls?: VRControls;
   private disposed = false;
   private offerCleanup?: () => void;   // removes the offerVR re-offer listener on dispose
+  private resetCleanup?: () => void;   // removes the reference-space 'reset' listener on session end
   private readonly animate = (time?: number) => {
     for (const cb of this.frameCbs) cb();
     this.vrControls?.update(time ?? 0);
@@ -108,10 +109,12 @@ export class StereoScene {
       this.inPassthroughSession = !!(blend && blend !== 'opaque');
       if (this.inPassthroughSession) this.setPassthrough(true);
       this.buildVRControls();
+      this.bindReferenceReset(); // react to the user's system (headset) recenter
     });
     this.renderer.xr.addEventListener('sessionend', () => {
       this.renderer.setClearAlpha(1); // restore opaque clear for desktop / next VR session
       this.inPassthroughSession = false;
+      this.resetCleanup?.(); this.resetCleanup = undefined;
       this.vrControls?.dispose(); this.vrControls = undefined;
       this.video.pause(); // stop playback when leaving VR
     });
@@ -164,6 +167,19 @@ export class StereoScene {
     const q = new THREE.Quaternion().setFromEuler(new THREE.Euler(0, yaw, 0, 'YXZ'));
     const offset = new XRRigidTransform({ x: pos.x, y: 0, z: pos.z }, { x: q.x, y: q.y, z: q.z, w: q.w });
     xr.setReferenceSpace(baseRef.getOffsetReferenceSpace(offset));
+    this.bindReferenceReset();       // re-listen on the new offset space
+    this.vrControls?.reposition();   // re-lock the panel in front after the recenter
+  }
+
+  /** (Re)attach a 'reset' listener to the active reference space so a system (headset)
+   *  recenter re-places the world-locked VR panel in front of the viewer. */
+  private bindReferenceReset(): void {
+    this.resetCleanup?.();
+    const ref = this.renderer.xr.getReferenceSpace();
+    if (!ref) { this.resetCleanup = undefined; return; }
+    const onReset = () => this.vrControls?.reposition();
+    ref.addEventListener('reset', onReset);
+    this.resetCleanup = () => ref.removeEventListener('reset', onReset);
   }
 
   /** Optional title shown on the in-VR control panel. */

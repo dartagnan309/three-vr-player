@@ -292,7 +292,7 @@ export class VRControls {
       case 'exit': this.actions.exitVR(); break;
       case 'passthrough': if (this.actions.passthroughAvailable()) this.actions.togglePassthrough(); break;
       case 'projection': this.projOpen ? this.closeProj() : this.openProj(); break; // globe toggles the popup
-      case 'recenter': this.actions.recenter(); this.placeFrames = 12; break; // re-place the panel in the new frame
+      case 'recenter': this.actions.recenter(); break; // recenter() re-places the panel via reposition()
 
       case 'seek': if (hit.value !== undefined) this.actions.seekFraction(hit.value); break;
       case 'volume':
@@ -437,6 +437,11 @@ export class VRControls {
     if (pressed && !this.togglePrev) this.toggle();
     this.togglePrev = pressed;
   }
+
+  /** Re-lock the panel to the current head pose over the next few frames (e.g. after a
+   *  recenter — button, API, or the headset's own system recenter). No-op while hidden;
+   *  show() re-places it fresh anyway. */
+  reposition(): void { if (this.visible) this.placeFrames = 12; }
 
   private toggle(): void { this.visible ? this.hide() : this.show(); }
 

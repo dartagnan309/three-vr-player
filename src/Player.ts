@@ -230,6 +230,9 @@ export class Player {
   /** Enter immersive AR (passthrough) — for alpha/fisheye content. */
   async enterAR() { await this.scene.enterAR(); }
   exitVR() { this.scene.exitVR(); }
+  /** Recenter the immersive view in front of the current head pose (VR/AR only; no-op
+   *  otherwise). Resets yaw + horizontal position, keeping head height and a level horizon. */
+  recenter() { this.scene.recenter(); }
 
   get three() { return { renderer: this.scene.renderer, scene: this.scene.scene, camera: this.scene.camera }; }
 
