@@ -202,7 +202,9 @@ export class StereoScene {
       const g = new THREE.SphereGeometry(50, 64, 32, Math.PI - phiLen / 2, phiLen, Math.PI / 2 - thetaLen / 2, thetaLen);
       g.scale(-1, 1, 1); return g;
     }
-    if (kind === 'fisheye') return this.buildFisheyeDome((MODES[mode].fisheyeAngle ?? 190) / 2);
+    // Zoom shrinks the dome's half-angle (like the spheres' arc), so the fisheye content
+    // recedes into a smaller window as f drops; f = 1 is the content's full field of view.
+    if (kind === 'fisheye') return this.buildFisheyeDome(((MODES[mode].fisheyeAngle ?? 190) / 2) * f);
     const h = 2.4 * f, w = h * this.planeAspect(mode);
     const g = new THREE.PlaneGeometry(w, h); g.translate(0, 0, -2); return g;
   }
