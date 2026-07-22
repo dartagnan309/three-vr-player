@@ -1,6 +1,6 @@
 {
   "name": "three-vr-player",
-  "version": "0.10.4",
+  "version": "0.10.5",
   "description": "Embeddable web player for 180/360 and side-by-side/top-bottom 3D video, undistorted on desktop and in WebXR. Built on three.js.",
   "type": "module",
   "license": "MIT",
