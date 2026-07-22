@@ -7,6 +7,15 @@ export type Projection =
   | 'fisheye220-mono' | 'fisheye220-sbs' | 'fisheye220-tb'
   | 'flat-2d' | 'flat-sbs-full' | 'flat-sbs-half' | 'flat-tb';
 
+/** Normalized proxy state shared between the Player, the settings UI, and the
+ *  `proxychange` event payload. */
+export interface ProxyUIState {
+  url: string;
+  apiPassword: string;
+  enabled: boolean;
+  transcode: boolean;
+}
+
 export interface PlayerOptions {
   /** Initial source URL. If omitted, call `player.load(src)` later. */
   src?: string;
@@ -16,8 +25,10 @@ export interface PlayerOptions {
   autoDetect?: boolean;
   /** Render the built-in controls UI. Default `true`. */
   controls?: boolean;
-  /** Optional CORS proxy (e.g. a mediaflow-proxy) for cross-origin sources. */
-  proxy?: { url: string; apiPassword?: string; headers?: Record<string, string> };
+  /** Optional CORS proxy (e.g. a mediaflow-proxy) for cross-origin sources.
+   *  Set `transcode: true` to have the proxy re-serve progressive sources as
+   *  browser-compatible fMP4 (audio → AAC; video → H.264 only when it isn't already). */
+  proxy?: { url: string; apiPassword?: string; headers?: Record<string, string>; transcode?: boolean };
   /** Swap which eye's half is shown (for reversed sources). Default `false`. */
   swapEyes?: boolean;
   /** Vertical field of view in degrees. Default `70`. */

@@ -33,4 +33,27 @@ or on the web component:
 Sources that already send `Access-Control-Allow-Origin` don't need the proxy — omit
 the `proxy` option and they load directly.
 
+## Transcoding incompatible audio (AC-3 / DTS → AAC)
+
+Some files carry audio the browser can't decode (Dolby AC-3/E-AC3, DTS — common in
+`.mkv`). mediaflow-proxy can re-serve a **progressive** source as browser-compatible
+**fMP4**: audio is normalized to AAC and video is copied when it's already H.264 (only
+re-encoded if it isn't). Turn it on per-source:
+
+```ts
+new Player(container, {
+  src: 'https://some-host.example/movie.mkv',
+  proxy: { url: 'http://localhost:8888', apiPassword: 'changeme', transcode: true },
+});
+```
+
+or tick **Transcode audio** in the ⚙ settings, add `proxy-transcode` on the web
+component, or call `player.setProxy({ url, apiPassword, enabled: true, transcode: true })`.
+
+Under the hood this adds `&transcode=true` to the proxy's `/proxy/stream` request. It
+applies to progressive sources only (HLS/DASH manifests are passed through unchanged).
+The proxy must have transcoding enabled (`ENABLE_TRANSCODE=true`, its default);
+GPU is used when available. Transcoding is heavier than a plain proxy — expect more CPU
+and some startup latency.
+
 > Note: the API password travels in the query string. Keep this proxy local/private.

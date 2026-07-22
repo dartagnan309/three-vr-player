@@ -5,4 +5,6 @@ services:
       - "8888:8888"
     environment:
       - API_PASSWORD=${API_PASSWORD:-changeme}
+      - ENABLE_TRANSCODE=${ENABLE_TRANSCODE:-true}
+      - TRANSCODE_AUDIO_BITRATE=${TRANSCODE_AUDIO_BITRATE:-192000}
     restart: unless-stopped

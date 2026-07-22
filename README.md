@@ -73,7 +73,8 @@ new Player(container, {
   projection?: Projection;      // default '180-sbs' (or auto-detected)
   autoDetect?: boolean;         // default true
   controls?: boolean;           // default true (built-in UI)
-  proxy?: { url: string; apiPassword?: string; headers?: Record<string,string> };
+  proxy?: { url: string; apiPassword?: string; headers?: Record<string,string>;
+            transcode?: boolean }; // re-serve as browser fMP4 (audio→AAC, video→H.264 as needed)
   swapEyes?: boolean;           // default false
   fov?: number;                 // default 70
   supersampling?: number;       // default 1.5 (× devicePixelRatio, capped at 4)
@@ -91,7 +92,7 @@ new Player(container, {
 ```ts
 player.load(src, { projection? }); player.play(); player.pause();
 player.setProjection(p); player.setSwapEyes(b); player.setFov(deg); player.setSupersampling(x);
-player.setProxy({ url, apiPassword?, enabled });  // two-way synced with the ⚙ settings fields
+player.setProxy({ url, apiPassword?, enabled, transcode? });  // two-way synced with the ⚙ settings fields
 player.enterVR(); player.dispose();
 player.video;   // the underlying <video>
 player.three;   // { renderer, scene, camera }
@@ -121,6 +122,12 @@ failing on a black screen. Disable with `nativeFallback: false`.
 
 The browser must be able to decode the file: MP4/WebM with H.264/HEVC/VP9 + AAC/Opus is
 safest. `.mkv` and Dolby AC-3/DTS audio are browser limitations, not the player.
+
+If you run the [proxy companion](./proxy), enable **`transcode: true`** (or tick
+**Transcode to browser-compatible** in the ⚙ settings) to have it re-serve progressive
+sources as fMP4 — audio is always normalized to AAC (fixing AC-3/E-AC3/DTS), and video is
+copied when it's already H.264 or re-encoded otherwise (HEVC/VP9 → H.264). Requires the
+proxy's `ENABLE_TRANSCODE` (on by default).
 
 ## Develop
 

@@ -38,4 +38,16 @@ describe('buildProxyUrl', () => {
     const { url } = buildProxyUrl('https://x/a.mp4', { url: 'http://localhost:8888', headers: { Referer: 'https://vr.cam/' } });
     expect(new URL(url).searchParams.get('h_Referer')).toBe('https://vr.cam/');
   });
+  it('transcode → transcode=true on progressive sources', () => {
+    const { url } = buildProxyUrl('https://x/a.mkv', { ...PROXY, transcode: true });
+    expect(new URL(url).searchParams.get('transcode')).toBe('true');
+  });
+  it('no transcode flag when transcode is off', () => {
+    const { url } = buildProxyUrl('https://x/a.mkv', PROXY);
+    expect(new URL(url).searchParams.has('transcode')).toBe(false);
+  });
+  it('transcode flag is omitted for HLS/DASH (manifest endpoints ignore it)', () => {
+    expect(new URL(buildProxyUrl('https://x/a.m3u8', { ...PROXY, transcode: true }).url).searchParams.has('transcode')).toBe(false);
+    expect(new URL(buildProxyUrl('https://x/a.mpd', { ...PROXY, transcode: true }).url).searchParams.has('transcode')).toBe(false);
+  });
 });

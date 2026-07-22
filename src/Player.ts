@@ -5,7 +5,7 @@ import { buildProxyUrl, type ProxyConfig } from './core/proxy.js';
 import { detectProjection } from './core/projections.js';
 import { ControlsUI } from './ui/ControlsUI.js';
 import css from './ui/controls.css?inline';
-import type { PlayerOptions, PlayerEvent, Projection } from './types.js';
+import type { PlayerOptions, PlayerEvent, Projection, ProxyUIState } from './types.js';
 
 type ViewSettings = { projection: Projection; swapEyes: boolean; fov: number; supersampling: number };
 const STORE_KEY = 'three-vr-player:settings';
@@ -98,9 +98,9 @@ export class Player {
         setFov: (d) => this.setFov(d),
         setSupersampling: (x) => this.setSupersampling(x),
         initial: { swapEyes: this.view.swapEyes, fov: this.view.fov, supersampling: this.view.supersampling },
-        proxy: { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy },
+        proxy: { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy, transcode: !!this.proxyConfig?.transcode },
         setProxy: (p) => this.setProxy(p),
-        onProxyChange: (cb) => this.on('proxychange', (p) => cb(p as { url: string; apiPassword: string; enabled: boolean })),
+        onProxyChange: (cb) => this.on('proxychange', (p) => cb(p as ProxyUIState)),
       });
     }
 
@@ -220,10 +220,13 @@ export class Player {
   setSupersampling(x: number) { this.scene.setSupersampling(x); this.view.supersampling = x; this.persist(); }
   /** Update the CORS proxy config / toggle it, and reload the current source if any.
    *  Emits 'proxychange' with the normalized state so the settings UI stays in sync. */
-  setProxy(p: { url: string; apiPassword?: string; enabled: boolean }) {
-    this.proxyConfig = p.url ? { url: p.url, apiPassword: p.apiPassword || undefined } : undefined;
+  setProxy(p: { url: string; apiPassword?: string; enabled: boolean; transcode?: boolean }) {
+    this.proxyConfig = p.url ? { url: p.url, apiPassword: p.apiPassword || undefined, transcode: !!p.transcode } : undefined;
     this.useProxy = p.enabled;
-    this.emit('proxychange', { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy });
+    this.emit('proxychange', {
+      url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '',
+      enabled: this.useProxy, transcode: !!this.proxyConfig?.transcode,
+    });
     if (this.currentSrc) void this.load(this.currentSrc);
   }
 

@@ -22,7 +22,11 @@ export class ThreeVideoElement extends HTMLElement {
       fov: this.numAttr('fov'),
       supersampling: this.numAttr('supersampling'),
       proxy: this.getAttribute('proxy-url')
-        ? { url: this.getAttribute('proxy-url')!, apiPassword: this.getAttribute('proxy-password') ?? undefined }
+        ? {
+            url: this.getAttribute('proxy-url')!,
+            apiPassword: this.getAttribute('proxy-password') ?? undefined,
+            transcode: this.hasAttribute('proxy-transcode'),
+          }
         : undefined,
     });
   }

@@ -1,4 +1,4 @@
-import type { Projection } from '../types.js';
+import type { Projection, ProxyUIState } from '../types.js';
 import {
   composeProjection, decomposeProjection, FISHEYE_ANGLES,
   type ProjType, type Split, type FisheyeAngle, type FlatWidth,
@@ -21,10 +21,10 @@ export interface PlayerBridge {
   setFov(deg: number): void;
   setSupersampling(x: number): void;
   initial: { swapEyes: boolean; fov: number; supersampling: number };
-  proxy: { url: string; apiPassword: string; enabled: boolean };
-  setProxy(p: { url: string; apiPassword: string; enabled: boolean }): void;
+  proxy: ProxyUIState;
+  setProxy(p: ProxyUIState): void;
   /** Notifies when the proxy config changes (incl. programmatic setProxy) so the fields stay in sync. */
-  onProxyChange(cb: (p: { url: string; apiPassword: string; enabled: boolean }) => void): void;
+  onProxyChange(cb: (p: ProxyUIState) => void): void;
 }
 
 type Props = Record<string, unknown> & { class?: string };
@@ -98,6 +98,7 @@ export class ControlsUI {
     const ssRange = h('input', { type: 'range', min: '1', max: '2', step: '0.25', value: String(bridge.initial.supersampling) });
     const ssVal = h('span', { textContent: String(bridge.initial.supersampling) });
     const useProxyCb = h('input', { type: 'checkbox', checked: bridge.proxy.enabled });
+    const transcodeCb = h('input', { type: 'checkbox', checked: bridge.proxy.transcode });
     const proxyUrlIn = h('input', { type: 'text', value: bridge.proxy.url, placeholder: 'http://localhost:8888', spellcheck: false });
     const proxyPwIn = h('input', { type: 'password', value: bridge.proxy.apiPassword, placeholder: 'API password' });
     const settings = h('section', { class: 'tvp-settings' }, [
@@ -108,6 +109,7 @@ export class ControlsUI {
       h('label', { class: 'row' }, [useProxyCb, 'Use CORS proxy']),
       h('label', {}, ['Proxy URL', proxyUrlIn]),
       h('label', {}, ['API password', proxyPwIn]),
+      h('label', { class: 'row' }, [transcodeCb, 'Transcode (H.264/AAC)']),
     ]);
 
     const toast = h('div', { class: 'tvp-toast' });
@@ -212,14 +214,19 @@ export class ControlsUI {
     on(swapCb, 'change', () => bridge.setSwapEyes(swapCb.checked));
     on(fovRange, 'input', () => { const d = Number(fovRange.value); fovVal.textContent = String(d); bridge.setFov(d); });
     on(ssRange, 'input', () => { const x = Number(ssRange.value); ssVal.textContent = String(x); bridge.setSupersampling(x); });
-    const applyProxy = () => bridge.setProxy({ url: proxyUrlIn.value.trim(), apiPassword: proxyPwIn.value, enabled: useProxyCb.checked });
+    const applyProxy = () => bridge.setProxy({
+      url: proxyUrlIn.value.trim(), apiPassword: proxyPwIn.value,
+      enabled: useProxyCb.checked, transcode: transcodeCb.checked,
+    });
     on(useProxyCb, 'change', applyProxy);
+    on(transcodeCb, 'change', applyProxy);
     on(proxyUrlIn, 'change', applyProxy);
     on(proxyPwIn, 'change', applyProxy);
     // Reflect programmatic (or reloaded) proxy changes back into the fields. Only setting the
     // element properties — no 'change' event is dispatched, so this won't re-trigger applyProxy.
-    bridge.onProxyChange(({ url, apiPassword, enabled }) => {
-      proxyUrlIn.value = url; proxyPwIn.value = apiPassword; useProxyCb.checked = enabled;
+    bridge.onProxyChange(({ url, apiPassword, enabled, transcode }) => {
+      proxyUrlIn.value = url; proxyPwIn.value = apiPassword;
+      useProxyCb.checked = enabled; transcodeCb.checked = transcode;
     });
     on(bridge.surface, 'wheel', (e: WheelEvent) => {
       e.preventDefault();
