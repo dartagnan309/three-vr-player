@@ -50,5 +50,7 @@ export interface PlayerOptions {
 export type PlayerEvent =
   | 'ready' | 'play' | 'pause' | 'ended' | 'error' | 'timeupdate'
   | 'projectionchange' | 'enterxr' | 'exitxr'
+  /** Emitted when the CORS proxy config/toggle changes (keeps the settings UI in sync). */
+  | 'proxychange'
   /** Emitted when the player drops to 2D native playback due to CORS. */
   | 'fallback';

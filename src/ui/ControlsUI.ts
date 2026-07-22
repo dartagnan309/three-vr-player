@@ -23,6 +23,8 @@ export interface PlayerBridge {
   initial: { swapEyes: boolean; fov: number; supersampling: number };
   proxy: { url: string; apiPassword: string; enabled: boolean };
   setProxy(p: { url: string; apiPassword: string; enabled: boolean }): void;
+  /** Notifies when the proxy config changes (incl. programmatic setProxy) so the fields stay in sync. */
+  onProxyChange(cb: (p: { url: string; apiPassword: string; enabled: boolean }) => void): void;
 }
 
 type Props = Record<string, unknown> & { class?: string };
@@ -214,6 +216,11 @@ export class ControlsUI {
     on(useProxyCb, 'change', applyProxy);
     on(proxyUrlIn, 'change', applyProxy);
     on(proxyPwIn, 'change', applyProxy);
+    // Reflect programmatic (or reloaded) proxy changes back into the fields. Only setting the
+    // element properties — no 'change' event is dispatched, so this won't re-trigger applyProxy.
+    bridge.onProxyChange(({ url, apiPassword, enabled }) => {
+      proxyUrlIn.value = url; proxyPwIn.value = apiPassword; useProxyCb.checked = enabled;
+    });
     on(bridge.surface, 'wheel', (e: WheelEvent) => {
       e.preventDefault();
       const next = Math.max(30, Math.min(100, Number(fovRange.value) + Math.sign(e.deltaY) * 3));

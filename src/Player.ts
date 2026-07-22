@@ -100,6 +100,7 @@ export class Player {
         initial: { swapEyes: this.view.swapEyes, fov: this.view.fov, supersampling: this.view.supersampling },
         proxy: { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy },
         setProxy: (p) => this.setProxy(p),
+        onProxyChange: (cb) => this.on('proxychange', (p) => cb(p as { url: string; apiPassword: string; enabled: boolean })),
       });
     }
 
@@ -214,10 +215,12 @@ export class Player {
   setSwapEyes(v: boolean) { this.scene.setSwapEyes(v); this.view.swapEyes = v; this.persist(); }
   setFov(deg: number) { this.scene.setFov(deg); this.view.fov = deg; this.persist(); }
   setSupersampling(x: number) { this.scene.setSupersampling(x); this.view.supersampling = x; this.persist(); }
-  /** Update the CORS proxy config / toggle it, and reload the current source if any. */
+  /** Update the CORS proxy config / toggle it, and reload the current source if any.
+   *  Emits 'proxychange' with the normalized state so the settings UI stays in sync. */
   setProxy(p: { url: string; apiPassword?: string; enabled: boolean }) {
     this.proxyConfig = p.url ? { url: p.url, apiPassword: p.apiPassword || undefined } : undefined;
     this.useProxy = p.enabled;
+    this.emit('proxychange', { url: this.proxyConfig?.url ?? '', apiPassword: this.proxyConfig?.apiPassword ?? '', enabled: this.useProxy });
     if (this.currentSrc) void this.load(this.currentSrc);
   }
 
