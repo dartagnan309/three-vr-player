@@ -9,7 +9,7 @@
 export const PANEL_W = 1024;
 export const PANEL_H = 340;
 
-export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'passthrough' | 'projection';
+export type VRRegion = 'play' | 'seek' | 'volume' | 'exit' | 'recenter' | 'projection' | 'passthrough' | 'settings';
 
 export interface Rect { x: number; y: number; w: number; h: number; }
 
@@ -17,8 +17,9 @@ export interface PanelLayout {
   width: number; height: number;
   title: Rect;
   recenter: Rect;
-  projection: Rect;   // opens the projection sub-page
+  projection: Rect;   // opens the projection popup
   passthrough: Rect;
+  settings: Rect;     // opens the view-settings popup
   exit: Rect;
   play: Rect;
   volIcon: Rect;
@@ -34,11 +35,13 @@ export function panelLayout(): PanelLayout {
   const W = PANEL_W, H = PANEL_H, pad = 48;
   return {
     width: W, height: H,
-    // Top-row icon buttons (reticle / globe / eye / door-arrow). Compact so they read as icons.
-    recenter:    { x: 30, y: 26, w: 64, h: 52 },
-    projection:  { x: 108, y: 26, w: 64, h: 52 }, // globe → opens the projection grid sub-page
-    passthrough: { x: 186, y: 26, w: 64, h: 52 }, // toggle; shown only in a passthrough (AR) session
-    exit:        { x: W - 94, y: 26, w: 64, h: 52 },
+    // Top-row icon buttons (door-arrow / reticle / globe / eye / gear). Compact so they read
+    // as icons. Exit sits alone on the left; the rest cluster on the right.
+    exit:        { x: 30, y: 26, w: 64, h: 52 },
+    recenter:    { x: W - 328, y: 26, w: 64, h: 52 },
+    projection:  { x: W - 250, y: 26, w: 64, h: 52 }, // globe → opens the projection popup
+    passthrough: { x: W - 172, y: 26, w: 64, h: 52 }, // toggle; shown only in a passthrough (AR) session
+    settings:    { x: W - 94, y: 26, w: 64, h: 52 },  // gear → opens the view-settings popup
     title:   { x: 0, y: 92, w: W, h: 44 },
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },
     volIcon: { x: pad, y: 178, w: 44, h: 44 },
@@ -73,6 +76,7 @@ export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout(
   if (inRect(layout.recenter, x, y)) return { region: 'recenter' };
   if (inRect(layout.projection, x, y)) return { region: 'projection' };
   if (inRect(layout.passthrough, x, y)) return { region: 'passthrough' };
+  if (inRect(layout.settings, x, y)) return { region: 'settings' };
   if (inRect(layout.exit, x, y)) return { region: 'exit' };
   if (inRect(layout.play, x, y)) return { region: 'play' };
   if (inRect(layout.volIcon, x, y)) return { region: 'volume' }; // no value -> toggle mute
@@ -150,6 +154,67 @@ export function projGridHitTest(x: number, y: number, layout: ProjGridLayout = p
     for (const cell of g.cells) {
       if (inRect(cell.rect, x, y)) return { region: 'cell', axis: cell.axis, value: cell.value };
     }
+  }
+  return null;
+}
+
+// ---- View-settings popup: stepper rows for zoom / pitch / yaw / height / roll ----
+
+export const SETTINGS_W = 560;
+export const SETTINGS_H = 640;
+export type SettingsKey = 'zoom' | 'pitch' | 'yaw' | 'height' | 'roll';
+
+export interface SettingsRow {
+  key: SettingsKey; caption: string; captionY: number;
+  minus: Rect; plus: Rect; bar: Rect;
+}
+export interface SettingsLayout {
+  width: number; height: number;
+  close: Rect;
+  title: { x: number; y: number };
+  reset: Rect;
+  rows: SettingsRow[];
+}
+
+const SETTINGS_ROWS: { key: SettingsKey; caption: string }[] = [
+  { key: 'zoom', caption: 'Zoom' },
+  { key: 'pitch', caption: 'Pitch' },
+  { key: 'yaw', caption: 'Yaw' },
+  { key: 'height', caption: 'Height' },
+  { key: 'roll', caption: 'Roll' },
+];
+
+/** Layout of the view-settings popup (a portrait panel floated to the right). */
+export function settingsLayout(): SettingsLayout {
+  const W = SETTINGS_W, pad = 32;
+  const rows: SettingsRow[] = SETTINGS_ROWS.map(({ key, caption }, i) => {
+    const ry = 104 + i * 100;                 // caption baseline
+    const minus: Rect = { x: pad, y: ry + 16, w: 56, h: 52 };
+    const plus: Rect = { x: W - pad - 56, y: ry + 16, w: 56, h: 52 };
+    const bar: Rect = { x: minus.x + minus.w + 16, y: ry + 31, w: plus.x - 16 - (minus.x + minus.w + 16), h: 22 };
+    return { key, caption, captionY: ry, minus, plus, bar };
+  });
+  return {
+    width: W, height: SETTINGS_H,
+    close: { x: W - 60, y: 20, w: 44, h: 44 },
+    title: { x: pad, y: 46 },
+    reset: { x: W / 2 - 100, y: 584, w: 200, h: 48 },
+    rows,
+  };
+}
+
+export type SettingsHit =
+  | { region: 'close' }
+  | { region: 'reset' }
+  | { region: 'step'; key: SettingsKey; dir: -1 | 1 };
+
+/** Map a canvas-pixel point on the settings popup to a stepper / reset / close. */
+export function settingsHitTest(x: number, y: number, layout: SettingsLayout = settingsLayout()): SettingsHit | null {
+  if (inRect(layout.close, x, y)) return { region: 'close' };
+  if (inRect(layout.reset, x, y)) return { region: 'reset' };
+  for (const row of layout.rows) {
+    if (inRect(row.minus, x, y)) return { region: 'step', key: row.key, dir: -1 };
+    if (inRect(row.plus, x, y)) return { region: 'step', key: row.key, dir: 1 };
   }
   return null;
 }

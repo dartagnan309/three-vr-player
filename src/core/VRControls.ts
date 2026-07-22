@@ -7,7 +7,9 @@ import {
 } from './projections.js';
 import {
   PANEL_W, PANEL_H, panelLayout, hitTest, projGridLayout, projGridHitTest, ANGLE_THIRD_ROW,
+  SETTINGS_W, SETTINGS_H, settingsLayout, settingsHitTest,
   type PanelLayout, type VRRegion, type Rect, type ProjGridHit, type ThirdRow, type ProjGridLayout,
+  type SettingsKey, type SettingsHit,
 } from './vr-panel-layout.js';
 
 /** The playback state + commands the panel needs. Kept small so the owner
@@ -35,6 +37,10 @@ export interface VRControlsActions {
   /** Projection grid: the current mode, and select a specific mode. */
   currentProjection(): Projection;
   setProjection(p: Projection): void;
+  /** View settings popup: current value+range of a setting, nudge it, and reset all. */
+  viewParam(key: SettingsKey): { value: number; min: number; max: number };
+  stepView(key: SettingsKey, dir: number): void;
+  resetView(): void;
 }
 
 const ACCENT = '#4f8cff';
@@ -72,8 +78,15 @@ export class VRControls {
   private readonly projCtx: CanvasRenderingContext2D;
   private readonly projTexture: THREE.CanvasTexture;
   private readonly projPanel: THREE.Mesh;
-  private panelH = 0;                     // main panel world height (for placing the popup above it)
-  private projPanelH = 0;                 // popup world height
+  // View settings — a separate popup panel that floats to the right of the main controls.
+  private readonly setCanvas: HTMLCanvasElement;
+  private readonly setCtx: CanvasRenderingContext2D;
+  private readonly setTexture: THREE.CanvasTexture;
+  private readonly setPanel: THREE.Mesh;
+  private panelH = 0;                     // main panel world height (for placing the popups)
+  private panelW = 0;                     // main panel world width
+  private projPanelH = 0;                 // projection popup world height
+  private setPanelW = 0;                  // settings popup world width
   private readonly cursor: THREE.Mesh;   // white dot at the laser/panel intersection
 
   private readonly raycaster = new THREE.Raycaster();
@@ -97,10 +110,13 @@ export class VRControls {
 
   private visible = false;
   private projOpen = false;                     // is the projection popup showing?
+  private settingsOpen = false;                 // is the settings popup showing?
   private hover: VRRegion | null = null;        // main-panel hover
-  private projHover: string | null = null;      // popup hover: 'close' or 'axis:value'
+  private projHover: string | null = null;      // projection popup hover: 'close' or 'axis:value'
+  private setHover: string | null = null;       // settings popup hover: 'close' | 'reset' | 'key:dir'
   private paintKey = '';
   private projPaintKey = '';
+  private setPaintKey = '';
   private idleAt = 0;
   private togglePrev = false;
   private placeFrames = 0;               // re-lock the panel to the head pose for a few frames after summon
@@ -119,7 +135,7 @@ export class VRControls {
     this.texture.minFilter = THREE.LinearFilter;
 
     const pw = 1.0, ph = (pw * PANEL_H) / PANEL_W; // ~3:1, ~35° wide at 1.6 m
-    this.panelH = ph;
+    this.panelH = ph; this.panelW = pw;
     this.panel = new THREE.Mesh(
       new THREE.PlaneGeometry(pw, ph),
       new THREE.MeshBasicMaterial({ map: this.texture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
@@ -146,6 +162,24 @@ export class VRControls {
     this.projPanel.frustumCulled = false;
     this.projPanel.visible = false;
     this.scene.add(this.projPanel);
+
+    // View-settings popup: portrait canvas/mesh floated to the right on demand.
+    this.setCanvas = document.createElement('canvas');
+    this.setCanvas.width = SETTINGS_W; this.setCanvas.height = SETTINGS_H;
+    this.setCtx = this.setCanvas.getContext('2d')!;
+    this.setTexture = new THREE.CanvasTexture(this.setCanvas);
+    this.setTexture.colorSpace = THREE.SRGBColorSpace;
+    this.setTexture.minFilter = THREE.LinearFilter;
+    const sw = 0.62, sh = (sw * SETTINGS_H) / SETTINGS_W;
+    this.setPanelW = sw;
+    this.setPanel = new THREE.Mesh(
+      new THREE.PlaneGeometry(sw, sh),
+      new THREE.MeshBasicMaterial({ map: this.setTexture, transparent: true, depthTest: false, side: THREE.DoubleSide }),
+    );
+    this.setPanel.renderOrder = 12;
+    this.setPanel.frustumCulled = false;
+    this.setPanel.visible = false;
+    this.scene.add(this.setPanel);
 
     this.cursor = new THREE.Mesh(
       new THREE.SphereGeometry(0.007, 16, 12),
@@ -197,6 +231,7 @@ export class VRControls {
 
     this.paint(true);
     this.paintProj(true);
+    this.paintSettings(true);
     // Not shown on entry — summoned by the grip button or by moving a controller.
   }
 
@@ -224,10 +259,11 @@ export class VRControls {
     // Auto-hide after a spell of no aiming at the panel.
     if (this.idleAt && time > this.idleAt) { this.hide(); return; }
 
-    // Raycast both controllers against the popup (if open) first, then the main panel —
-    // the popup floats on top, so it wins the hover where the two overlap.
+    // Raycast both controllers against the open popups first, then the main panel —
+    // the popups float on top, so they win the hover where they overlap.
     let hover: VRRegion | null = null;
     let projHover: string | null = null;
+    let setHover: string | null = null;
     let cursorAt: THREE.Vector3 | null = null;
     for (let i = 0; i < this.controllers.length; i++) {
       const laser = this.lasers[i];
@@ -239,11 +275,15 @@ export class VRControls {
       if (!this.connected[i] || !posed) { laser.visible = false; continue; }
       let r: RayResult | null = null;
       if (this.projOpen) {
-        const rp = this.rayHitMesh(controller, this.projPanel);
+        const rp = this.rayHitMesh(controller, this.projPanel, PANEL_W, PANEL_H);
         if (rp.uv) { const g = projGridHitTest(rp.uv.x, rp.uv.y, this.projLayout()); if (g) projHover = projHitKey(g); r = rp; }
       }
+      if (!r && this.settingsOpen) {
+        const rs = this.rayHitMesh(controller, this.setPanel, SETTINGS_W, SETTINGS_H);
+        if (rs.uv) { const s = settingsHitTest(rs.uv.x, rs.uv.y); if (s) setHover = settingsHitKey(s); r = rs; }
+      }
       if (!r) {
-        const rm = this.rayHitMesh(controller, this.panel);
+        const rm = this.rayHitMesh(controller, this.panel, PANEL_W, PANEL_H);
         if (rm.uv) { const hh = hitTest(rm.uv.x, rm.uv.y, this.layout); if (hh) hover = hh.region; r = rm; }
       }
       // Draw a laser only when it actually meets a panel — the aiming feedback the user
@@ -253,24 +293,26 @@ export class VRControls {
     }
     if (cursorAt) { this.cursor.position.copy(cursorAt); this.cursor.visible = true; }
     else this.cursor.visible = false;
-    if (hover || projHover) this.idleAt = time + IDLE_HIDE_MS; // stay up while actively aimed at
+    if (hover || projHover || setHover) this.idleAt = time + IDLE_HIDE_MS; // stay up while actively aimed at
     this.hover = hover;
     this.projHover = projHover;
+    this.setHover = setHover;
     this.paint(false);
     if (this.projOpen) this.paintProj(false);
+    if (this.settingsOpen) this.paintSettings(false);
   }
 
-  /** Ray from a controller against a panel mesh: the canvas-pixel UV under it (if any),
-   *  the laser reach, and the world hit point. */
-  private rayHitMesh(controller: THREE.Group, mesh: THREE.Mesh): RayResult {
+  /** Ray from a controller against a panel mesh: the canvas-pixel UV under it (if any,
+   *  scaled to w×h), the laser reach, and the world hit point. */
+  private rayHitMesh(controller: THREE.Group, mesh: THREE.Mesh, w: number, h: number): RayResult {
     this.tmpMatrix.identity().extractRotation(controller.matrixWorld);
     this.raycaster.ray.origin.setFromMatrixPosition(controller.matrixWorld);
     this.raycaster.ray.direction.set(0, 0, -1).applyMatrix4(this.tmpMatrix);
     const hits = this.raycaster.intersectObject(mesh, false);
     if (!hits.length) return { uv: null, distance: 5, point: null };
-    const h = hits[0];
-    const uv = h.uv ? { x: h.uv.x * PANEL_W, y: (1 - h.uv.y) * PANEL_H } : null;
-    return { uv, distance: h.distance, point: h.point };
+    const hit = hits[0];
+    const uv = hit.uv ? { x: hit.uv.x * w, y: (1 - hit.uv.y) * h } : null;
+    return { uv, distance: hit.distance, point: hit.point };
   }
 
   private onSelect(index: number): void {
@@ -278,12 +320,16 @@ export class VRControls {
     // Trigger with the panel hidden just summons it — there's nothing to aim at yet.
     if (!this.visible) { this.show(); return; }
     this.idleAt = performanceNow() + IDLE_HIDE_MS;
-    // Popup is modal-ish: if it's open and the ray is on it, that tap is for the popup.
+    // Popups are modal-ish: if one is open and the ray is on it, that tap is for the popup.
     if (this.projOpen) {
-      const rp = this.rayHitMesh(this.controllers[index], this.projPanel);
+      const rp = this.rayHitMesh(this.controllers[index], this.projPanel, PANEL_W, PANEL_H);
       if (rp.uv) { this.onProjSelect(rp.uv.x, rp.uv.y); return; }
     }
-    const r = this.rayHitMesh(this.controllers[index], this.panel);
+    if (this.settingsOpen) {
+      const rs = this.rayHitMesh(this.controllers[index], this.setPanel, SETTINGS_W, SETTINGS_H);
+      if (rs.uv) { this.onSettingsSelect(rs.uv.x, rs.uv.y); return; }
+    }
+    const r = this.rayHitMesh(this.controllers[index], this.panel, PANEL_W, PANEL_H);
     if (!r.uv) return;
     const hit = hitTest(r.uv.x, r.uv.y, this.layout);
     if (!hit) return;
@@ -292,6 +338,7 @@ export class VRControls {
       case 'exit': this.actions.exitVR(); break;
       case 'passthrough': if (this.actions.passthroughAvailable()) this.actions.togglePassthrough(); break;
       case 'projection': this.projOpen ? this.closeProj() : this.openProj(); break; // globe toggles the popup
+      case 'settings': this.settingsOpen ? this.closeSettings() : this.openSettings(); break; // gear toggles the popup
       case 'recenter': this.actions.recenter(); break; // recenter() re-places the panel via reposition()
 
       case 'seek': if (hit.value !== undefined) this.actions.seekFraction(hit.value); break;
@@ -356,6 +403,37 @@ export class VRControls {
     const up = this.tmpVec.set(0, 1, 0).applyQuaternion(this.panel.quaternion);
     this.projPanel.quaternion.copy(this.panel.quaternion);
     this.projPanel.position.copy(this.panel.position).addScaledVector(up, this.panelH / 2 + 0.05 + this.projPanelH / 2);
+  }
+
+  /** A tap on the settings popup: ✕ closes it, reset restores defaults, ∓ nudges a setting. */
+  private onSettingsSelect(x: number, y: number): void {
+    const s = settingsHitTest(x, y);
+    if (!s) return;
+    if (s.region === 'close') { this.closeSettings(); this.paint(true); return; }
+    if (s.region === 'reset') this.actions.resetView();
+    else this.actions.stepView(s.key, s.dir);
+    this.paintSettings(true);
+  }
+
+  /** Open the settings popup, floated to the right of the main panel. */
+  private openSettings(): void {
+    this.settingsOpen = true;
+    this.placeSettings();
+    this.setPanel.visible = true;
+    this.paintSettings(true);
+  }
+
+  /** Close the settings popup. */
+  private closeSettings(): void {
+    this.settingsOpen = false;
+    this.setPanel.visible = false;
+  }
+
+  /** Position the settings popup just right of the main panel, sharing its orientation. */
+  private placeSettings(): void {
+    const right = this.tmpVec.set(1, 0, 0).applyQuaternion(this.panel.quaternion);
+    this.setPanel.quaternion.copy(this.panel.quaternion);
+    this.setPanel.position.copy(this.panel.position).addScaledVector(right, this.panelW / 2 + 0.05 + this.setPanelW / 2);
   }
 
   /** Re-summon the panel when a connected controller is deliberately moved (and
@@ -448,7 +526,8 @@ export class VRControls {
   private show(): void {
     this.place();
     this.placeFrames = 12;   // settle onto the real head pose over the next frames
-    this.projOpen = false; this.projPanel.visible = false; // always summon to the main controls
+    this.projOpen = false; this.projPanel.visible = false;   // always summon to the main controls
+    this.settingsOpen = false; this.setPanel.visible = false;
     this.visible = true;
     this.panel.visible = true;
     this.idleAt = performanceNow() + IDLE_HIDE_MS;
@@ -459,6 +538,7 @@ export class VRControls {
     this.visible = false;
     this.panel.visible = false;
     this.projOpen = false; this.projPanel.visible = false;
+    this.settingsOpen = false; this.setPanel.visible = false;
     this.cursor.visible = false;
     for (const l of this.lasers) l.visible = false;
     this.revealCooldownUntil = performanceNow() + REVEAL_COOLDOWN_MS;
@@ -478,7 +558,8 @@ export class VRControls {
     this.panel.position.y -= 0.55;                 // near the lower field of view
     this.panel.quaternion.copy(yawQuat);           // plane front (+Z) faces back toward the viewer
     this.panel.rotateX(-0.3);                      // sitting low, angle the face up toward the eyes
-    if (this.projOpen) this.placeProj();           // keep the popup pinned above the main panel
+    if (this.projOpen) this.placeProj();           // keep the popups pinned to the main panel
+    if (this.settingsOpen) this.placeSettings();
   }
 
   /** Trim text with a trailing ellipsis to fit maxWidth. Assumes c.font is set. */
@@ -504,7 +585,7 @@ export class VRControls {
     const cur = this.actions.currentTime(), dur = this.actions.duration();
     const vol = this.actions.volume(), muted = this.actions.muted();
     const ptOn = this.actions.passthroughAvailable() && this.actions.passthroughEnabled();
-    const key = ['main', this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn, this.actions.currentProjection(), this.projOpen].join('|');
+    const key = ['main', this.actions.isPlaying(), Math.floor(cur), Math.floor(dur), vol.toFixed(2), muted, this.hover, this.actions.title(), this.actions.passthroughAvailable(), ptOn, this.actions.currentProjection(), this.projOpen, this.settingsOpen].join('|');
     if (!force && key === this.paintKey) return;
     this.paintKey = key;
 
@@ -517,7 +598,7 @@ export class VRControls {
     if (title) {
       c.font = '600 30px system-ui,"Segoe UI",Roboto,sans-serif';
       c.fillStyle = TEXT; c.textAlign = 'center'; c.textBaseline = 'middle';
-      const maxW = 2 * L.exit.x - 48 - PANEL_W; // keep the centered title clear of the top-right pill
+      const maxW = 2 * (L.recenter.x - PANEL_W / 2) - 48; // keep the centered title clear of the right-side icons
       c.fillText(this.ellipsize(title, maxW), PANEL_W / 2, L.title.y + L.title.h / 2);
     }
 
@@ -525,6 +606,7 @@ export class VRControls {
     // momentary; passthrough (eye, slashed when off) is a toggle (accent when on, border on hover).
     this.drawIconButton(L.recenter, this.hover === 'recenter', false, (x, y, col) => this.iconRecenter(x, y, col));
     this.drawIconButton(L.projection, this.projOpen, this.hover === 'projection', (x, y, col) => this.iconGlobe(x, y, col));
+    this.drawIconButton(L.settings, this.settingsOpen, this.hover === 'settings', (x, y, col) => this.iconGear(x, y, col));
     this.drawIconButton(L.exit, this.hover === 'exit', false, (x, y, col) => this.iconExit(x, y, col));
     if (this.actions.passthroughAvailable()) {
       const on = this.actions.passthroughEnabled();
@@ -602,9 +684,51 @@ export class VRControls {
     this.projTexture.needsUpdate = true;
   }
 
-  /** The panel's rounded background slab. */
-  private slab(c: CanvasRenderingContext2D = this.ctx): void {
-    this.roundRect(0, 0, PANEL_W, PANEL_H, 28, c);
+  /** Paint the view-settings popup (its own canvas): a titled list of stepper rows
+   *  (Zoom / Pitch / Yaw / Height / Roll) with a fill bar + value each, and Reset. */
+  private paintSettings(force: boolean): void {
+    const c = this.setCtx, L = settingsLayout();
+    const params = L.rows.map((row) => this.actions.viewParam(row.key));
+    const key = ['set', this.setHover, ...params.map((p, i) => `${L.rows[i].key}:${p.value.toFixed(3)}`)].join('|');
+    if (!force && key === this.setPaintKey) return;
+    this.setPaintKey = key;
+
+    c.clearRect(0, 0, SETTINGS_W, SETTINGS_H);
+    this.slab(c, SETTINGS_W, SETTINGS_H);
+
+    // Title (left) + ✕ close (top-right)
+    c.fillStyle = TEXT; c.font = '600 28px system-ui,"Segoe UI",Roboto,sans-serif';
+    c.textAlign = 'left'; c.textBaseline = 'middle';
+    c.fillText('Settings', L.title.x, L.title.y);
+    this.drawIconButton(L.close, false, this.setHover === 'close', (x, y, col) => this.iconClose(x, y, col, c), c);
+
+    L.rows.forEach((row, i) => {
+      const { value, min, max } = params[i];
+      const frac = max > min ? Math.max(0, Math.min(1, (value - min) / (max - min))) : 0;
+      // caption (left) + value (right), above the bar
+      c.font = '600 18px system-ui,sans-serif'; c.textBaseline = 'alphabetic';
+      c.fillStyle = MUTED_TEXT; c.textAlign = 'left'; c.fillText(row.caption, row.minus.x, row.captionY);
+      c.fillStyle = TEXT; c.textAlign = 'right'; c.fillText(this.fmtSetting(row.key, value), row.plus.x + row.plus.w, row.captionY);
+      // − / + steppers and the fill bar between them
+      this.drawIconButton(row.minus, false, this.setHover === `${row.key}:-1`, (x, y, col) => this.iconPlusMinus(x, y, false, col, c), c);
+      this.drawIconButton(row.plus, false, this.setHover === `${row.key}:1`, (x, y, col) => this.iconPlusMinus(x, y, true, col, c), c);
+      this.drawBar(row.bar, frac, false, true, c);
+    });
+
+    this.drawTextButton(L.reset, 'Reset to default', false, this.setHover === 'reset', c);
+    this.setTexture.needsUpdate = true;
+  }
+
+  /** Format a setting value for display: angles in degrees, height in metres, zoom as a factor. */
+  private fmtSetting(key: SettingsKey, v: number): string {
+    if (key === 'height') return `${v.toFixed(2)} m`;
+    if (key === 'zoom') return v.toFixed(2);
+    return `${(v * 180 / Math.PI).toFixed(1)}°`; // pitch / yaw / roll
+  }
+
+  /** A panel's rounded background slab (defaults to the main panel size). */
+  private slab(c: CanvasRenderingContext2D = this.ctx, w = PANEL_W, h = PANEL_H): void {
+    this.roundRect(0, 0, w, h, 28, c);
     c.fillStyle = 'rgba(22,24,30,0.84)'; c.fill();
     c.lineWidth = 2; c.strokeStyle = 'rgba(255,255,255,0.08)'; c.stroke();
   }
@@ -680,6 +804,29 @@ export class VRControls {
     c.stroke();
   }
 
+  /** Settings — a gear (a ring with eight teeth and a hub). */
+  private iconGear(cx: number, cy: number, color: string): void {
+    const c = this.ctx, ro = 13, ri = 8.5;
+    c.strokeStyle = color; c.fillStyle = color; c.lineWidth = 2.2; c.lineCap = 'round';
+    for (let i = 0; i < 8; i++) {
+      const a = (i / 8) * Math.PI * 2;
+      const ca = Math.cos(a), sa = Math.sin(a);
+      c.beginPath(); c.moveTo(cx + ca * ri, cy + sa * ri); c.lineTo(cx + ca * (ro + 3), cy + sa * (ro + 3)); c.stroke();
+    }
+    c.beginPath(); c.arc(cx, cy, ri, 0, Math.PI * 2); c.stroke();
+    c.beginPath(); c.arc(cx, cy, 3, 0, Math.PI * 2); c.fill();
+  }
+
+  /** A − or + glyph for the settings steppers (drawn to the given context). */
+  private iconPlusMinus(cx: number, cy: number, plus: boolean, color: string, c: CanvasRenderingContext2D): void {
+    const s = 10;
+    c.strokeStyle = color; c.lineWidth = 3; c.lineCap = 'round';
+    c.beginPath();
+    c.moveTo(cx - s, cy); c.lineTo(cx + s, cy);
+    if (plus) { c.moveTo(cx, cy - s); c.lineTo(cx, cy + s); }
+    c.stroke();
+  }
+
   /** Projection — a globe (circle + a meridian and two parallels). */
   private iconGlobe(cx: number, cy: number, color: string): void {
     const c = this.ctx, r = 13;
@@ -693,10 +840,10 @@ export class VRControls {
     c.stroke();
   }
 
-  private drawBar(r: { x: number; y: number; w: number; h: number }, frac: number, hovered: boolean, knob = false): void {
-    const c = this.ctx, rad = r.h / 2;
-    this.roundRect(r.x, r.y, r.w, r.h, rad); c.fillStyle = 'rgba(255,255,255,0.22)'; c.fill();
-    if (frac > 0) { this.roundRect(r.x, r.y, r.w * frac, r.h, rad); c.fillStyle = ACCENT; c.fill(); }
+  private drawBar(r: { x: number; y: number; w: number; h: number }, frac: number, hovered: boolean, knob = false, c: CanvasRenderingContext2D = this.ctx): void {
+    const rad = r.h / 2;
+    this.roundRect(r.x, r.y, r.w, r.h, rad, c); c.fillStyle = 'rgba(255,255,255,0.22)'; c.fill();
+    if (frac > 0) { this.roundRect(r.x, r.y, r.w * frac, r.h, rad, c); c.fillStyle = ACCENT; c.fill(); }
     if (knob || hovered) {
       c.beginPath(); c.arc(r.x + r.w * frac, r.y + r.h / 2, hovered ? 12 : 9, 0, Math.PI * 2);
       c.fillStyle = '#fff'; c.fill();
@@ -734,6 +881,10 @@ export class VRControls {
     this.projPanel.geometry.dispose();
     (this.projPanel.material as THREE.Material).dispose();
     this.projTexture.dispose();
+    this.scene.remove(this.setPanel);
+    this.setPanel.geometry.dispose();
+    (this.setPanel.material as THREE.Material).dispose();
+    this.setTexture.dispose();
     this.scene.remove(this.cursor);
     this.cursor.geometry.dispose();
     (this.cursor.material as THREE.Material).dispose();
@@ -752,3 +903,5 @@ function performanceNow(): number {
 /** Stable hover/identity key for a projection-grid cell. */
 function projCellKey(axis: string, value: string): string { return `${axis}:${value}`; }
 function projHitKey(g: ProjGridHit): string { return g.region === 'close' ? 'close' : projCellKey(g.axis, g.value); }
+/** Stable hover/identity key for a settings popup hit. */
+function settingsHitKey(s: SettingsHit): string { return s.region === 'step' ? `${s.key}:${s.dir}` : s.region; }

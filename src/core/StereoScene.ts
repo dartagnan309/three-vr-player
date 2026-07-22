@@ -2,6 +2,7 @@ import * as THREE from 'three';
 import type { Projection } from '../types.js';
 import { MODES } from './projections.js';
 import { VRControls } from './VRControls.js';
+import type { SettingsKey } from './vr-panel-layout.js';
 
 
 /**
@@ -149,6 +150,9 @@ export class StereoScene {
         togglePassthrough: () => this.setPassthrough(!this.passthroughOn),
         currentProjection: () => this.currentMode,
         setProjection: (p) => this.requestProjection(p),
+        viewParam: (k) => this.viewParam(k),
+        stepView: (k, d) => this.stepView(k, d),
+        resetView: () => this.resetView(),
       },
     });
   }
@@ -400,8 +404,52 @@ export class StereoScene {
    *  scene recedes and feels farther; growing it fills the view. Rebuilds the projection
    *  geometry, throttled so it doesn't churn every frame. */
   adjustZoom(delta: number) {
-    this.fov = Math.max(0.3, Math.min(1, this.fov + delta));
+    const z = StereoScene.VIEW_RANGES.zoom;
+    this.fov = Math.max(z.min, Math.min(z.max, this.fov + delta));
     if (Math.abs(this.fov - this.builtFov) >= 0.03) this.rebuildGeometry();
+  }
+
+  // ---- Absolute view settings (the in-VR settings popup): zoom/pitch/yaw/height/roll ----
+  private static readonly VIEW_RANGES: Record<SettingsKey, { min: number; max: number; step: number }> = {
+    zoom:   { min: 0.3, max: 1.5,           step: 0.05 }, // >1 magnifies past the content's natural size
+    pitch:  { min: -0.9, max: 0.9,          step: 0.04 },
+    yaw:    { min: -Math.PI, max: Math.PI,  step: 0.05 },
+    height: { min: -1.5, max: 1.5,          step: 0.05 },
+    roll:   { min: -0.6, max: 0.6,          step: 0.03 },
+  };
+
+  private viewValue(key: SettingsKey): number {
+    if (key === 'zoom') return this.fov;
+    if (key === 'pitch') return this.tilt;
+    if (key === 'yaw') return this.rig.rotation.y;
+    if (key === 'roll') return this.rig.rotation.z;
+    return this.rig.position.y; // height
+  }
+
+  private applyView(key: SettingsKey, v: number): void {
+    if (key === 'zoom') { this.fov = v; if (Math.abs(this.fov - this.builtFov) >= 0.03) this.rebuildGeometry(); }
+    else if (key === 'pitch') { this.tilt = v; this.rig.rotation.x = v; }
+    else if (key === 'yaw') this.rig.rotation.y = v;
+    else if (key === 'roll') this.rig.rotation.z = v;
+    else this.rig.position.y = v; // height
+  }
+
+  /** Current value + range of a view setting (for the in-VR settings sliders). */
+  viewParam(key: SettingsKey): { value: number; min: number; max: number } {
+    const r = StereoScene.VIEW_RANGES[key];
+    return { value: this.viewValue(key), min: r.min, max: r.max };
+  }
+  /** Nudge a view setting by ±one step, clamped to its range. */
+  stepView(key: SettingsKey, dir: number): void {
+    const r = StereoScene.VIEW_RANGES[key];
+    this.applyView(key, Math.max(r.min, Math.min(r.max, this.viewValue(key) + Math.sign(dir) * r.step)));
+  }
+  /** Reset zoom/pitch/yaw/height/roll to their defaults. */
+  resetView(): void {
+    this.fov = 1; this.tilt = 0;
+    this.rig.rotation.set(0, 0, 0);
+    this.rig.position.y = 0;
+    this.rebuildGeometry();
   }
 
   private rebuildGeometry() {

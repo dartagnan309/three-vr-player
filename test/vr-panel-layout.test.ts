@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { hitTest, panelLayout, PANEL_W, projGridLayout, projGridHitTest } from '../src/core/vr-panel-layout.js';
+import { hitTest, panelLayout, PANEL_W, projGridLayout, projGridHitTest, settingsLayout, settingsHitTest } from '../src/core/vr-panel-layout.js';
 
 const L = panelLayout();
 const mid = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
@@ -28,6 +28,11 @@ describe('vr panel hitTest', () => {
   it('hits the projection button top row', () => {
     const p = mid(L.projection);
     expect(hitTest(p.x, p.y)).toEqual({ region: 'projection' });
+  });
+
+  it('hits the settings button top row', () => {
+    const p = mid(L.settings);
+    expect(hitTest(p.x, p.y)).toEqual({ region: 'settings' });
   });
 
   it('reads a seek fraction from the bar position', () => {
@@ -88,5 +93,26 @@ describe('projection grid hitTest', () => {
     const half = widthLayout.groups[2].cells.find((cl) => cl.value === 'half')!.rect;
     expect(projGridHitTest(half.x + half.w / 2, half.y + half.h / 2, widthLayout))
       .toEqual({ region: 'cell', axis: 'flatWidth', value: 'half' });
+  });
+});
+
+describe('settings popup hitTest', () => {
+  const S = settingsLayout();
+  const midR = (r: { x: number; y: number; w: number; h: number }) => ({ x: r.x + r.w / 2, y: r.y + r.h / 2 });
+
+  it('hits close and reset', () => {
+    expect(settingsHitTest(midR(S.close).x, midR(S.close).y)).toEqual({ region: 'close' });
+    expect(settingsHitTest(midR(S.reset).x, midR(S.reset).y)).toEqual({ region: 'reset' });
+  });
+
+  it('hits each row stepper (− and +)', () => {
+    for (const row of S.rows) {
+      expect(settingsHitTest(midR(row.minus).x, midR(row.minus).y)).toEqual({ region: 'step', key: row.key, dir: -1 });
+      expect(settingsHitTest(midR(row.plus).x, midR(row.plus).y)).toEqual({ region: 'step', key: row.key, dir: 1 });
+    }
+  });
+
+  it('exposes the five expected settings in order', () => {
+    expect(S.rows.map((r) => r.key)).toEqual(['zoom', 'pitch', 'yaw', 'height', 'roll']);
   });
 });
