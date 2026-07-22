@@ -268,8 +268,12 @@ export class ControlsUI {
   }
 }
 
-function makeText(prefix: string, valueSpan: HTMLElement, suffix: string): DocumentFragment {
-  const frag = document.createDocumentFragment();
-  frag.append(prefix, valueSpan, suffix);
-  return frag;
+/** One caption line: "Field of view (zoom): 70°". Wrapped in a single span so it
+ *  stays on one row inside the column-flex label (a bare fragment would let the
+ *  value and unit drop onto their own lines). */
+function makeText(prefix: string, valueSpan: HTMLElement, suffix: string): HTMLElement {
+  const line = document.createElement('span');
+  line.className = 'tvp-caption';
+  line.append(prefix, valueSpan, suffix);
+  return line;
 }
