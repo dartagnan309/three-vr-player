@@ -39,6 +39,7 @@
   font:13px system-ui,"Segoe UI",Roboto,sans-serif; }
 .tvp-projmenu[hidden] { display:none; }
 .tvp-projgroup { display:flex; flex-direction:column; gap:6px; }
+.tvp-projgroup[hidden] { display:none; }
 .tvp-projcap { font-size:11px; letter-spacing:.06em; text-transform:uppercase; color:#8a93a3; }
 .tvp-projrow { display:flex; gap:6px; }
 .tvp-projrow .tvp-projopt { flex:1; }
@@ -47,7 +48,6 @@
 .tvp-projopt:hover { background:#2b3242; }
 .tvp-projopt.active { background:#4f8cff; border-color:#4f8cff; color:#fff; }
 .tvp-projoff { text-align:center; }
-.tvp-projgroup.tvp-disabled { opacity:.38; pointer-events:none; }
 
 .tvp-btn.active { color:#4f8cff; }
 

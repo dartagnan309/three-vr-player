@@ -7,6 +7,8 @@ export type ProjType = 'flat' | '180' | '360' | 'fisheye';
 /** Fisheye field-of-view options (Fisheye-angle row). */
 export type FisheyeAngle = 190 | 200 | 210 | 220;
 export const FISHEYE_ANGLES: readonly FisheyeAngle[] = [190, 200, 210, 220];
+/** Flat SBS packing: 'full' = each eye full-width; 'half' = anamorphic (squeezed to frame). */
+export type FlatWidth = 'half' | 'full';
 
 export interface ModeConfig {
   geom: GeomKind;
@@ -69,28 +71,30 @@ export const PROJECTION_SHORT: Record<Projection, string> = {
   'flat-2d': 'Flat 2D', 'flat-sbs-full': 'Flat SBS', 'flat-sbs-half': 'Flat SBS½', 'flat-tb': 'Flat TB',
 };
 
-/** The three axes of a projection, as the selector grid presents them. */
-export interface ProjSpec { type: ProjType; split: Split; angle: FisheyeAngle; }
+/** The axes of a projection, as the selector grid presents them. `angle` applies only to
+ *  the fisheye type; `flatWidth` only to flat SBS. */
+export interface ProjSpec { type: ProjType; split: Split; angle: FisheyeAngle; flatWidth: FlatWidth; }
 
-/** Break a Projection into its (type, split, fisheye-angle) axes for the grid. */
+/** Break a Projection into its (type, split, fisheye-angle, flat-width) axes for the grid. */
 export function decomposeProjection(p: Projection): ProjSpec {
   const m = MODES[p];
   const type: ProjType =
     m.geom === 'sphere180' ? '180' :
     m.geom === 'sphere360' ? '360' :
     m.geom === 'fisheye' ? 'fisheye' : 'flat';
-  return { type, split: m.split, angle: m.fisheyeAngle ?? 190 };
+  return { type, split: m.split, angle: m.fisheyeAngle ?? 190, flatWidth: p === 'flat-sbs-half' ? 'half' : 'full' };
 }
 
 /**
- * Compose a Projection from the grid's axes. Flat SBS resolves to the full-frame
- * variant (the half/anamorphic variant stays reachable via detection / the API).
- * `angle` is only consulted for the fisheye type.
+ * Compose a Projection from the grid's axes. `angle` is only consulted for the fisheye
+ * type; `flatWidth` only for flat SBS (full = each eye full-width, half = anamorphic).
  */
-export function composeProjection(type: ProjType, split: Split, angle: FisheyeAngle = 190): Projection {
+export function composeProjection(type: ProjType, split: Split, angle: FisheyeAngle = 190, flatWidth: FlatWidth = 'full'): Projection {
   switch (type) {
     case 'flat':
-      return split === 'mono' ? 'flat-2d' : split === 'tb' ? 'flat-tb' : 'flat-sbs-full';
+      return split === 'mono' ? 'flat-2d'
+        : split === 'tb' ? 'flat-tb'
+        : flatWidth === 'half' ? 'flat-sbs-half' : 'flat-sbs-full';
     case 'fisheye':
       return `fisheye${angle}-${split}` as Projection;
     default: // '180' | '360'

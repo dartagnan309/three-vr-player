@@ -87,7 +87,7 @@ export function hitTest(x: number, y: number, layout: PanelLayout = panelLayout(
 
 // ---- Projection sub-page: a decomposed grid (layout × type × fisheye-angle) ----
 
-export type ProjAxis = 'split' | 'type' | 'angle';
+export type ProjAxis = 'split' | 'type' | 'angle' | 'flatWidth';
 export interface ProjCell { axis: ProjAxis; value: string; label: string; rect: Rect; }
 export interface ProjGroup { caption: string; captionY: number; cells: ProjCell[]; }
 export interface ProjGridLayout {
@@ -96,6 +96,13 @@ export interface ProjGridLayout {
   title: { x: number; y: number };
   groups: ProjGroup[];
 }
+
+/** The contextual third row (below Layout + Type): fisheye angles, flat-SBS width, etc. */
+export interface ThirdRow { caption: string; cells: { axis: ProjAxis; value: string; label: string }[]; }
+export const ANGLE_THIRD_ROW: ThirdRow = {
+  caption: 'Fisheye angle',
+  cells: [190, 200, 210, 220].map((a) => ({ axis: 'angle' as ProjAxis, value: String(a), label: `${a}°` })),
+};
 
 /** Evenly space `n` buttons of height `h` across the panel's padded width at row top `top`. */
 function cols(n: number, top: number, h: number, W = PANEL_W, pad = 40, gap = 16): Rect[] {
@@ -109,8 +116,9 @@ function group(caption: string, captionY: number, rowTop: number, h: number, ite
   return { caption, captionY, cells: items.map((it, i) => ({ ...it, rect: rects[i] })) };
 }
 
-/** Layout of the projection grid sub-page. */
-export function projGridLayout(): ProjGridLayout {
+/** Layout of the projection grid popup. The third row is contextual (fisheye angle,
+ *  flat-SBS width, …); pass it in so the painter and hit-tester agree on its cells. */
+export function projGridLayout(third: ThirdRow = ANGLE_THIRD_ROW): ProjGridLayout {
   const H = 52;
   return {
     width: PANEL_W, height: PANEL_H,
@@ -128,12 +136,7 @@ export function projGridLayout(): ProjGridLayout {
         { axis: 'type', value: '360', label: '360°' },
         { axis: 'type', value: 'fisheye', label: 'Fisheye' },
       ]),
-      group('Fisheye angle', 256, 268, H, [
-        { axis: 'angle', value: '190', label: '190°' },
-        { axis: 'angle', value: '200', label: '200°' },
-        { axis: 'angle', value: '210', label: '210°' },
-        { axis: 'angle', value: '220', label: '220°' },
-      ]),
+      group(third.caption, 256, 268, H, third.cells),
     ],
   };
 }

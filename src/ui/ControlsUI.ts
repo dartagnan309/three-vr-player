@@ -1,7 +1,7 @@
 import type { Projection } from '../types.js';
 import {
   composeProjection, decomposeProjection, FISHEYE_ANGLES,
-  type ProjType, type Split, type FisheyeAngle,
+  type ProjType, type Split, type FisheyeAngle, type FlatWidth,
 } from '../core/projections.js';
 import { formatTime } from './format.js';
 
@@ -76,10 +76,12 @@ export class ControlsUI {
       { value: 'flat', label: 'Flat' }, { value: '180', label: '180°' },
       { value: '360', label: '360°' }, { value: 'fisheye', label: 'Fisheye' },
     ]);
+    // Contextual third row: fisheye angle (fisheye) OR SBS width (flat + SBS) — one shown at a time.
     const angleGroup = axisRow('angle', 'Fisheye angle', FISHEYE_ANGLES.map((a) => ({ value: String(a), label: `${a}°` })));
+    const widthGroup = axisRow('flatWidth', 'SBS width', [{ value: 'half', label: 'Half' }, { value: 'full', label: 'Full' }]);
     const offBtn = h('button', { class: 'tvp-projopt tvp-projoff', textContent: 'Off (native player)' });
     offBtn.dataset.axis = 'off'; offBtn.dataset.value = 'off';
-    projMenu.append(layoutGroup, typeGroup, angleGroup, h('hr', { class: 'tvp-sep' }), offBtn);
+    projMenu.append(layoutGroup, typeGroup, angleGroup, widthGroup, h('hr', { class: 'tvp-sep' }), offBtn);
     const projWrap = h('span', { class: 'tvp-projwrap' }, [projBtn, projMenu]);
 
     // --- settings ---
@@ -171,7 +173,10 @@ export class ControlsUI {
       if (!off) lastProj = mode as Projection;
       const spec = decomposeProjection(lastProj);
       const isFisheye = spec.type === 'fisheye';
-      angleGroup.classList.toggle('tvp-disabled', !isFisheye); // angle only applies to fisheye
+      const isFlatSbs = spec.type === 'flat' && spec.split === 'sbs';
+      // Third row: fisheye → angle; flat+SBS → width; otherwise neither is shown.
+      angleGroup.hidden = !isFisheye;
+      widthGroup.hidden = !isFlatSbs;
       projMenu.querySelectorAll<HTMLButtonElement>('button.tvp-projopt').forEach((b) => {
         const { axis, value } = b.dataset;
         const active =
@@ -179,7 +184,8 @@ export class ControlsUI {
           off ? false :
           axis === 'type' ? value === spec.type :
           axis === 'split' ? value === spec.split :
-          axis === 'angle' ? (isFisheye && value === String(spec.angle)) : false;
+          axis === 'angle' ? (isFisheye && value === String(spec.angle)) :
+          axis === 'flatWidth' ? (isFlatSbs && value === spec.flatWidth) : false;
         b.classList.toggle('active', active);
       });
       projBtn.title = off ? 'Projection: Off (native player)' : 'Projection';
@@ -187,15 +193,15 @@ export class ControlsUI {
     onTap(projBtn, () => { const open = projMenu.hidden; closeMenus(); projMenu.hidden = !open; });
     onTap(projMenu, (e: Event) => {
       const b = (e.target as HTMLElement).closest('button.tvp-projopt') as HTMLButtonElement | null;
-      if (!b || b.closest('.tvp-disabled')) return;
+      if (!b) return;
       const { axis, value } = b.dataset;
+      if (axis === 'off') { bridge.setProjection('off'); updateProjection(); return; }
       const s = decomposeProjection(lastProj);
-      let next: Projection | 'off';
-      if (axis === 'off') next = 'off';
-      else if (axis === 'type') next = composeProjection(value as ProjType, s.split, s.angle);
-      else if (axis === 'split') next = composeProjection(s.type, value as Split, s.angle);
-      else next = composeProjection('fisheye', s.split, Number(value) as FisheyeAngle); // angle → force fisheye
-      bridge.setProjection(next);
+      if (axis === 'type') s.type = value as ProjType;
+      else if (axis === 'split') s.split = value as Split;
+      else if (axis === 'angle') { s.type = 'fisheye'; s.angle = Number(value) as FisheyeAngle; } // angle → force fisheye
+      else if (axis === 'flatWidth') s.flatWidth = value as FlatWidth;                            // (flat SBS only)
+      bridge.setProjection(composeProjection(s.type, s.split, s.angle, s.flatWidth));
       updateProjection();
     });
     updateProjection();

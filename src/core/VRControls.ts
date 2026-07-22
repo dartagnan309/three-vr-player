@@ -3,11 +3,11 @@ import type { Projection } from '../types.js';
 import { formatTime } from '../ui/format.js';
 import {
   composeProjection, decomposeProjection, PROJECTION_SHORT,
-  type ProjType, type Split, type FisheyeAngle,
+  type ProjType, type Split, type FisheyeAngle, type FlatWidth, type ProjSpec,
 } from './projections.js';
 import {
-  PANEL_W, PANEL_H, panelLayout, hitTest, projGridLayout, projGridHitTest,
-  type PanelLayout, type VRRegion, type Rect, type ProjGridHit,
+  PANEL_W, PANEL_H, panelLayout, hitTest, projGridLayout, projGridHitTest, ANGLE_THIRD_ROW,
+  type PanelLayout, type VRRegion, type Rect, type ProjGridHit, type ThirdRow, type ProjGridLayout,
 } from './vr-panel-layout.js';
 
 /** The playback state + commands the panel needs. Kept small so the owner
@@ -240,7 +240,7 @@ export class VRControls {
       let r: RayResult | null = null;
       if (this.projOpen) {
         const rp = this.rayHitMesh(controller, this.projPanel);
-        if (rp.uv) { const g = projGridHitTest(rp.uv.x, rp.uv.y); if (g) projHover = projHitKey(g); r = rp; }
+        if (rp.uv) { const g = projGridHitTest(rp.uv.x, rp.uv.y, this.projLayout()); if (g) projHover = projHitKey(g); r = rp; }
       }
       if (!r) {
         const rm = this.rayHitMesh(controller, this.panel);
@@ -303,18 +303,36 @@ export class VRControls {
     this.paint(true);
   }
 
-  /** A tap on the projection popup: ✕ closes it; a cell edits one axis (type/layout/angle)
-   *  of the current projection and re-composes the mode (popup stays open for more edits). */
+  /** The contextual third row of the popup grid: fisheye angles for fisheye, Half/Full for
+   *  flat SBS, and nothing at all for any other type. */
+  private projThirdRow(spec: ProjSpec): ThirdRow {
+    if (spec.type === 'fisheye') return ANGLE_THIRD_ROW;
+    if (spec.type === 'flat' && spec.split === 'sbs') {
+      return { caption: 'SBS width', cells: [
+        { axis: 'flatWidth', value: 'half', label: 'Half' },
+        { axis: 'flatWidth', value: 'full', label: 'Full' },
+      ] };
+    }
+    return { caption: '', cells: [] }; // no third row for 180 / 360 / flat-mono / flat-tb
+  }
+
+  /** Popup grid layout built for the current mode (so paint + hit-test share the third row). */
+  private projLayout(): ProjGridLayout {
+    return projGridLayout(this.projThirdRow(decomposeProjection(this.actions.currentProjection())));
+  }
+
+  /** A tap on the projection popup: ✕ closes it; a cell edits one axis of the current
+   *  projection and re-composes the mode (popup stays open for more edits). */
   private onProjSelect(x: number, y: number): void {
-    const g = projGridHitTest(x, y);
+    const g = projGridHitTest(x, y, this.projLayout());
     if (!g) return;
     if (g.region === 'close') { this.closeProj(); this.paint(true); return; }
-    const cur = decomposeProjection(this.actions.currentProjection());
-    let next: Projection;
-    if (g.axis === 'type') next = composeProjection(g.value as ProjType, cur.split, cur.angle);
-    else if (g.axis === 'split') next = composeProjection(cur.type, g.value as Split, cur.angle);
-    else next = composeProjection('fisheye', cur.split, Number(g.value) as FisheyeAngle); // angle → force fisheye
-    this.actions.setProjection(next);
+    const s = decomposeProjection(this.actions.currentProjection());
+    if (g.axis === 'type') s.type = g.value as ProjType;
+    else if (g.axis === 'split') s.split = g.value as Split;
+    else if (g.axis === 'angle') { s.type = 'fisheye'; s.angle = Number(g.value) as FisheyeAngle; } // angle → force fisheye
+    else if (g.axis === 'flatWidth') s.flatWidth = g.value as FlatWidth;                            // (flat SBS only)
+    this.actions.setProjection(composeProjection(s.type, s.split, s.angle, s.flatWidth));
     this.paintProj(true);
     this.paint(true); // main panel shows the current-mode label
   }
@@ -547,11 +565,11 @@ export class VRControls {
    *  the angle row dims unless Fisheye is on. */
   private paintProj(force: boolean): void {
     const spec = decomposeProjection(this.actions.currentProjection());
-    const key = [spec.type, spec.split, spec.angle, this.projHover].join('|');
+    const key = [spec.type, spec.split, spec.angle, spec.flatWidth, this.projHover].join('|');
     if (!force && key === this.projPaintKey) return;
     this.projPaintKey = key;
 
-    const c = this.projCtx, L = projGridLayout();
+    const c = this.projCtx, L = this.projLayout();
     c.clearRect(0, 0, PANEL_W, PANEL_H);
     this.slab(c);
 
@@ -562,9 +580,7 @@ export class VRControls {
     this.drawIconButton(L.close, false, this.projHover === 'close', (x, y, col) => this.iconClose(x, y, col, c), c);
 
     for (const g of L.groups) {
-      const angleRow = g.cells[0]?.axis === 'angle';
-      const dim = angleRow && spec.type !== 'fisheye'; // angle only applies to fisheye
-      c.globalAlpha = dim ? 0.38 : 1;
+      if (!g.cells.length) continue; // contextual third row can be empty (e.g. 180/360)
       c.fillStyle = MUTED_TEXT; c.font = '600 15px system-ui,sans-serif';
       c.textAlign = 'left'; c.textBaseline = 'alphabetic';
       c.fillText(g.caption.toUpperCase(), g.cells[0].rect.x, g.captionY);
@@ -572,10 +588,10 @@ export class VRControls {
         const active =
           cell.axis === 'type' ? cell.value === spec.type :
           cell.axis === 'split' ? cell.value === spec.split :
-          !dim && cell.value === String(spec.angle);
+          cell.axis === 'angle' ? cell.value === String(spec.angle) :
+          cell.value === spec.flatWidth; // flatWidth
         this.drawTextButton(cell.rect, cell.label, active, this.projHover === projCellKey(cell.axis, cell.value), c);
       }
-      c.globalAlpha = 1;
     }
 
     this.projTexture.needsUpdate = true;

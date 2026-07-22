@@ -79,4 +79,14 @@ describe('projection grid hitTest', () => {
   it('returns null between rows', () => {
     expect(projGridHitTest(PANEL_W / 2, 172)).toBeNull(); // gap between the Layout and Type rows
   });
+
+  it('hits the contextual third row when it is the flat-SBS width row', () => {
+    const widthLayout = projGridLayout({
+      caption: 'SBS width',
+      cells: [{ axis: 'flatWidth', value: 'half', label: 'Half' }, { axis: 'flatWidth', value: 'full', label: 'Full' }],
+    });
+    const half = widthLayout.groups[2].cells.find((cl) => cl.value === 'half')!.rect;
+    expect(projGridHitTest(half.x + half.w / 2, half.y + half.h / 2, widthLayout))
+      .toEqual({ region: 'cell', axis: 'flatWidth', value: 'half' });
+  });
 });

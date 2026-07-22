@@ -31,7 +31,9 @@ describe('detectProjection', () => {
 describe('compose/decompose projection', () => {
   it('composes each axis combination into a real mode', () => {
     expect(composeProjection('flat', 'mono')).toBe('flat-2d');
-    expect(composeProjection('flat', 'sbs')).toBe('flat-sbs-full');
+    expect(composeProjection('flat', 'sbs')).toBe('flat-sbs-full');           // defaults to full
+    expect(composeProjection('flat', 'sbs', 190, 'half')).toBe('flat-sbs-half');
+    expect(composeProjection('flat', 'sbs', 190, 'full')).toBe('flat-sbs-full');
     expect(composeProjection('flat', 'tb')).toBe('flat-tb');
     expect(composeProjection('180', 'sbs')).toBe('180-sbs');
     expect(composeProjection('360', 'tb')).toBe('360-tb');
@@ -49,15 +51,15 @@ describe('compose/decompose projection', () => {
     }
   });
 
-  it('decompose is the inverse of compose (via the canonical flat-sbs-full)', () => {
-    const cases: Projection[] = ['180-tb', '360-mono', 'fisheye210-sbs', 'flat-tb', 'flat-2d'];
+  it('decompose is the inverse of compose across every axis', () => {
+    const cases: Projection[] = ['180-tb', '360-mono', 'fisheye210-sbs', 'flat-tb', 'flat-2d', 'flat-sbs-half', 'flat-sbs-full'];
     for (const p of cases) {
       const s = decomposeProjection(p);
-      expect(composeProjection(s.type, s.split, s.angle)).toBe(p);
+      expect(composeProjection(s.type, s.split, s.angle, s.flatWidth)).toBe(p);
     }
-    // Both flat SBS variants decompose to the FLAT+SBS cell.
-    expect(decomposeProjection('flat-sbs-half')).toEqual({ type: 'flat', split: 'sbs', angle: 190 });
-    expect(decomposeProjection('flat-sbs-full')).toEqual({ type: 'flat', split: 'sbs', angle: 190 });
+    // The two flat SBS variants differ only by flatWidth.
+    expect(decomposeProjection('flat-sbs-half')).toEqual({ type: 'flat', split: 'sbs', angle: 190, flatWidth: 'half' });
+    expect(decomposeProjection('flat-sbs-full')).toEqual({ type: 'flat', split: 'sbs', angle: 190, flatWidth: 'full' });
   });
 });
 
