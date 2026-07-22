@@ -836,17 +836,18 @@ export class VRControls {
     c.stroke();
   }
 
-  /** Exit — a door frame with an arrow pointing out to the right. */
+  /** Exit — a door frame with an arrow pointing out to the left (the button sits on the
+   *  left of the panel, so it points toward the edge it leaves through). */
   private iconExit(cx: number, cy: number, color: string): void {
-    const c = this.ctx, dx = cx - 15, dw = 11, dh = 22, a1 = cx + 16;
+    const c = this.ctx, dx = cx + 15, dw = 11, dh = 22, a1 = cx - 16;
     c.strokeStyle = color; c.lineWidth = 2.5; c.lineCap = 'round'; c.lineJoin = 'round';
     c.beginPath();
-    c.moveTo(dx + dw, cy - dh / 2); c.lineTo(dx, cy - dh / 2);
-    c.lineTo(dx, cy + dh / 2); c.lineTo(dx + dw, cy + dh / 2);
+    c.moveTo(dx - dw, cy - dh / 2); c.lineTo(dx, cy - dh / 2);
+    c.lineTo(dx, cy + dh / 2); c.lineTo(dx - dw, cy + dh / 2);
     c.stroke();
     c.beginPath();
-    c.moveTo(cx - 3, cy); c.lineTo(a1, cy);
-    c.moveTo(a1 - 7, cy - 6); c.lineTo(a1, cy); c.lineTo(a1 - 7, cy + 6);
+    c.moveTo(cx + 3, cy); c.lineTo(a1, cy);
+    c.moveTo(a1 + 7, cy - 6); c.lineTo(a1, cy); c.lineTo(a1 + 7, cy + 6);
     c.stroke();
   }
 
