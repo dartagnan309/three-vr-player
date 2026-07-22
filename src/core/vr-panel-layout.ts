@@ -35,12 +35,12 @@ export function panelLayout(): PanelLayout {
   const W = PANEL_W, H = PANEL_H, pad = 48;
   return {
     width: W, height: H,
-    // Top-row icon buttons (door-arrow / reticle / globe / eye / gear). Compact so they read
-    // as icons. Exit sits alone on the left; the rest cluster on the right.
+    // Top-row icon buttons (door-arrow / reticle / eye / globe / gear). Compact so they read
+    // as icons. Exit sits alone on the left, recenter in the centre, the rest cluster right.
     exit:        { x: 30, y: 26, w: 64, h: 52 },
-    recenter:    { x: W - 328, y: 26, w: 64, h: 52 },
-    projection:  { x: W - 250, y: 26, w: 64, h: 52 }, // globe → opens the projection popup
-    passthrough: { x: W - 172, y: 26, w: 64, h: 52 }, // toggle; shown only in a passthrough (AR) session
+    recenter:    { x: W / 2 - 32, y: 26, w: 64, h: 52 }, // reticle, top centre
+    passthrough: { x: W - 250, y: 26, w: 64, h: 52 }, // toggle; shown only in a passthrough (AR) session
+    projection:  { x: W - 172, y: 26, w: 64, h: 52 }, // globe → opens the projection popup (immediately left of settings)
     settings:    { x: W - 94, y: 26, w: 64, h: 52 },  // gear → opens the view-settings popup
     title:   { x: 0, y: 92, w: W, h: 44 },
     play:    { x: W / 2 - 44, y: 150, w: 88, h: 88 },

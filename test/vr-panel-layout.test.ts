@@ -15,7 +15,7 @@ describe('vr panel hitTest', () => {
     expect(hitTest(p.x, p.y)).toEqual({ region: 'exit' });
   });
 
-  it('hits the recenter button top-left', () => {
+  it('hits the recenter button top center', () => {
     const p = mid(L.recenter);
     expect(hitTest(p.x, p.y)).toEqual({ region: 'recenter' });
   });

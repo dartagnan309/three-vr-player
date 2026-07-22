@@ -647,7 +647,7 @@ export class VRControls {
     if (title) {
       c.font = '600 30px system-ui,"Segoe UI",Roboto,sans-serif';
       c.fillStyle = TEXT; c.textAlign = 'center'; c.textBaseline = 'middle';
-      const maxW = 2 * (L.recenter.x - PANEL_W / 2) - 48; // keep the centered title clear of the right-side icons
+      const maxW = 2 * (L.passthrough.x - PANEL_W / 2) - 48; // keep the centered title clear of the right-side icons
       c.fillText(this.ellipsize(title, maxW), PANEL_W / 2, L.title.y + L.title.h / 2);
     }
 
