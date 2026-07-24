@@ -18,3 +18,12 @@ $('url').addEventListener('keydown', (e) => { if ((e as KeyboardEvent).key === '
 
 // Expose for debugging / E2E.
 (window as unknown as { __demo: Player }).__demo = player;
+
+// Dev-only in-VR harness: loaded only with `?xr`, so it (and its `iwer` dep) never touches the
+// normal demo path or the shipped library. Then run `await xrHarness.runChecks()` in the console.
+if (new URLSearchParams(location.search).has('xr')) {
+  void import('./dev/xr-harness.js').then(async ({ install }) => {
+    window.xrHarness = await install(player);
+    console.log('%c in-VR harness ready — await xrHarness.runChecks() ', 'background:#4f8cff;color:#fff;padding:2px 8px;border-radius:3px;font-weight:600');
+  });
+}
