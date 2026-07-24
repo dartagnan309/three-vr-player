@@ -410,11 +410,17 @@ export class VRControls {
     this.projPanel.visible = false;
   }
 
-  /** Position the popup just above the main panel, sharing its orientation. */
+  /** Position the popup just above the main panel, then aim its face straight at the viewer's
+   *  eye so it reads flat/head-on. It floats high, where the low main panel's shared upward
+   *  recline would lean the popup's top away — so face the eye instead (yaw+pitch, no roll). */
   private placeProj(): void {
     const up = this.tmpVec.set(0, 1, 0).applyQuaternion(this.panel.quaternion);
-    this.projPanel.quaternion.copy(this.panel.quaternion);
     this.projPanel.position.copy(this.panel.position).addScaledVector(up, this.panelH / 2 + 0.05 + this.projPanelH / 2);
+    // Vector from the popup to the eye; the plane's front (+Z) is aimed along it.
+    const dir = this.renderer.xr.getCamera().getWorldPosition(this.tmpVec).sub(this.projPanel.position);
+    const yaw = Math.atan2(dir.x, dir.z);
+    const pitch = -Math.asin(Math.max(-1, Math.min(1, dir.y / (dir.length() || 1))));
+    this.projPanel.quaternion.setFromEuler(new THREE.Euler(pitch, yaw, 0, 'YXZ'));
   }
 
   /** A tap on the settings popup: ✕ closes it, reset restores defaults, ∓ nudges a setting,
