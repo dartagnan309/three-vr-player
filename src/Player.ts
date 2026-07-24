@@ -94,6 +94,7 @@ export class Player {
         onVrChange: (cb) => { this.on('enterxr', () => cb(true)); this.on('exitxr', () => cb(false)); },
         getProjection: () => this.displayMode,
         setProjection: (p) => this.setProjection(p),
+        onProjectionChange: (cb) => this.on('projectionchange', (p) => cb(p as Projection | 'off')),
         setSwapEyes: (v) => this.setSwapEyes(v),
         setFov: (d) => this.setFov(d),
         setSupersampling: (x) => this.setSupersampling(x),
@@ -139,6 +140,8 @@ export class Player {
     // Packed alpha matte (fisheye passthrough): explicit option, else DeoVR's `_ALPHA` filename marker.
     this.scene.setAlphaMatte(this.opts.alpha ?? /_alpha/i.test(src));
     if (this.displayMode !== 'off') this.displayMode = this.view.projection;
+    // Reflect the detected/loaded projection in the controls UI (which only re-syncs on this event).
+    this.emit('projectionchange', this.displayMode);
     const { url, format } = buildProxyUrl(src, this.useProxy ? this.proxyConfig : undefined);
     const primaryCO = this.opts.crossOrigin === undefined ? 'anonymous' : this.opts.crossOrigin;
     this.loading = true;
@@ -153,9 +156,11 @@ export class Player {
       if (this.opts.nativeFallback !== false && format === 'progressive' && primaryCO !== null) {
         try {
           this.tainted = true;
+          this.displayMode = 'off';     // 2D native playback — surface 'Off' in the projection UI
           this.setNativeFallback(true); // stop WebGL rendering before the tainted video loads
           await this.source.attach(this.video, { url, format }, { crossOrigin: null });
           await this.video.play().catch(() => {});
+          this.emit('projectionchange', 'off');
           this.emit('fallback');
           return;
         } catch (err2) {

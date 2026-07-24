@@ -17,6 +17,8 @@ export interface PlayerBridge {
   onVrChange(cb: (presenting: boolean) => void): void;
   getProjection(): Projection | 'off';
   setProjection(p: Projection | 'off'): void;
+  /** Notifies when the display projection changes (programmatic, in-VR stepper, or CORS native fallback). */
+  onProjectionChange(cb: (p: Projection | 'off') => void): void;
   setSwapEyes(v: boolean): void;
   setFov(deg: number): void;
   setSupersampling(x: number): void;
@@ -209,6 +211,9 @@ export class ControlsUI {
       updateProjection();
     });
     updateProjection();
+    // Keep the menu in sync with projection changes we didn't originate here: the in-VR
+    // stepper and the CORS native fallback (which forces display to 'off').
+    bridge.onProjectionChange(() => updateProjection());
 
     onTap(settingsBtn, () => { const open = !settings.classList.contains('open'); closeMenus(); settings.classList.toggle('open', open); });
     on(swapCb, 'change', () => bridge.setSwapEyes(swapCb.checked));
